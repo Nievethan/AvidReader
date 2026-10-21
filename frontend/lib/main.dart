@@ -395,7 +395,11 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   Widget build(BuildContext context) {
     // In Commit 3, tabs use temporary placeholders that we replace in Commits 4–7
     final List<Widget> screens = [
-      const Center(child: Text('1. Library Screen Placeholder')),
+      LibraryScreen(
+        activeBook: _activeBook,
+        libraryBooks: _libraryBooks,
+        onResumeTap: () => _navigateToTab(1),
+      ),
       const Center(child: Text('2. Reader Screen Placeholder')),
       const Center(child: Text('3. Ask AI Screen Placeholder')),
       const Center(child: Text('4. Visualize Screen Placeholder')),
@@ -498,6 +502,217 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class LibraryScreen extends StatelessWidget {
+  final BookItem activeBook;
+  final List<BookItem> libraryBooks;
+  final VoidCallback onResumeTap;
+
+  const LibraryScreen({
+    super.key,
+    required this.activeBook,
+    required this.libraryBooks,
+    required this.onResumeTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Top Header Bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: ClassicLitTheme.deckleBorder),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'My Library',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Select an EPUB or PDF file to upload'),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Upload'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: ClassicLitTheme.inkPrimary,
+                  side: const BorderSide(
+                    color: ClassicLitTheme.inkPrimary,
+                    width: 1.2,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Scrollable Body
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                'CONTINUE READING',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+              const SizedBox(height: 8),
+
+              // Active Book Card
+              PaperCard(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    BookCoverThumbnail(
+                      title: activeBook.title,
+                      spineColor: activeBook.spineColor,
+                      width: 72,
+                      height: 106,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            activeBook.title,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${activeBook.author} • Ch. ${activeBook.currentChapter}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: ClassicLitTheme.inkSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          VintageProgressBar(value: activeBook.progress),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${activeBook.progressPercent}% • p. ${activeBook.currentPage} / ${activeBook.totalPages}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: ClassicLitTheme.inkSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 36,
+                            child: ElevatedButton(
+                              onPressed: onResumeTap,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: ClassicLitTheme.oxbloodPrimary,
+                                foregroundColor: ClassicLitTheme.inkOnPrimary,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                              child: const Text(
+                                'Resume',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Knowledge Graph Ingestion Card
+              PaperCard(
+                backgroundColor: ClassicLitTheme.elevatedPaper,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text(
+                      'Processing "The_Brothers_Karamazov.epub"',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    VintageProgressBar(
+                      value: 38 / 120,
+                      fillColor: ClassicLitTheme.libraryGreen,
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Building knowledge graph... 38 / 120 pages. You can keep reading.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: ClassicLitTheme.inkSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              Text('YOUR BOOKS', style: Theme.of(context).textTheme.labelSmall),
+              const SizedBox(height: 10),
+
+              // 3-Column Book Grid
+              Row(
+                children: libraryBooks.map((book) {
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: GestureDetector(
+                        onTap: onResumeTap,
+                        child: BookCoverThumbnail(
+                          title: book.title,
+                          spineColor: book.spineColor,
+                          height: 118,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+
+              const SizedBox(height: 16),
+              const Text(
+                'Supports PDF and EPUB. Uploads are private, encrypted, and deleted after your session.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: ClassicLitTheme.inkSecondary,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
