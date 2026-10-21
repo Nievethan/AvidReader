@@ -330,11 +330,171 @@ class AvidReaderApp extends StatelessWidget {
       title: 'AvidReader',
       debugShowCheckedModeBanner: false,
       theme: ClassicLitTheme.themeData,
-      home: Scaffold(
-        body: Center(
-          child: Text(
-            'AvidReader Theme Initialized',
-            style: ClassicLitTheme.themeData.textTheme.headlineSmall,
+      home: const ReadingDashboardShell(),
+    );
+  }
+}
+
+class ReadingDashboardShell extends StatefulWidget {
+  const ReadingDashboardShell({super.key});
+
+  @override
+  State<ReadingDashboardShell> createState() => _ReadingDashboardShellState();
+}
+
+class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
+  int _selectedIndex = 0;
+
+  final BookItem _activeBook = const BookItem(
+    id: 'book-1',
+    title: 'Crime and Punishment',
+    author: 'Fyodor Dostoevsky',
+    currentChapter: 7,
+    currentPage: 112,
+    totalPages: 320,
+    spineColor: ClassicLitTheme.oxbloodPrimary,
+  );
+
+  final List<BookItem> _libraryBooks = const [
+    BookItem(
+      id: 'book-2',
+      title: 'Jane Eyre',
+      author: 'Charlotte Brontë',
+      currentChapter: 4,
+      currentPage: 64,
+      totalPages: 410,
+      spineColor: ClassicLitTheme.libraryGreen,
+    ),
+    BookItem(
+      id: 'book-3',
+      title: 'The Odyssey',
+      author: 'Homer',
+      currentChapter: 1,
+      currentPage: 12,
+      totalPages: 380,
+      spineColor: Color(0xFF4A3B32),
+    ),
+    BookItem(
+      id: 'book-4',
+      title: 'Middlemarch',
+      author: 'George Eliot',
+      currentChapter: 12,
+      currentPage: 215,
+      totalPages: 520,
+      spineColor: Color(0xFF5B3246),
+    ),
+  ];
+
+  void _navigateToTab(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // In Commit 3, tabs use temporary placeholders that we replace in Commits 4–7
+    final List<Widget> screens = [
+      const Center(child: Text('1. Library Screen Placeholder')),
+      const Center(child: Text('2. Reader Screen Placeholder')),
+      const Center(child: Text('3. Ask AI Screen Placeholder')),
+      const Center(child: Text('4. Visualize Screen Placeholder')),
+      const Center(child: Text('5. Progress Screen Placeholder')),
+    ];
+
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: IndexedStack(index: _selectedIndex, children: screens),
+          ),
+        ),
+      ),
+      bottomNavigationBar: _buildBottomNavBar(),
+    );
+  }
+
+  Widget _buildBottomNavBar() {
+    const items = [
+      (
+        icon: Icons.local_library_outlined,
+        activeIcon: Icons.local_library,
+        label: 'Library',
+      ),
+      (
+        icon: Icons.menu_book_outlined,
+        activeIcon: Icons.menu_book,
+        label: 'Reader',
+      ),
+      (
+        icon: Icons.auto_awesome_outlined,
+        activeIcon: Icons.auto_awesome,
+        label: 'Ask AI',
+      ),
+      (
+        icon: Icons.palette_outlined,
+        activeIcon: Icons.palette,
+        label: 'Visualize',
+      ),
+      (
+        icon: Icons.insights_outlined,
+        activeIcon: Icons.insights,
+        label: 'Progress',
+      ),
+    ];
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: ClassicLitTheme.linenCard,
+        border: Border(
+          top: BorderSide(color: ClassicLitTheme.deckleBorder, width: 1.2),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 62,
+          child: Row(
+            children: List.generate(items.length, (index) {
+              final item = items[index];
+              final isSelected = _selectedIndex == index;
+              return Expanded(
+                child: InkWell(
+                  onTap: () => _navigateToTab(index),
+                  child: Container(
+                    color: isSelected
+                        ? ClassicLitTheme.oxbloodPrimary.withValues(alpha: 0.10)
+                        : Colors.transparent,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          isSelected ? item.activeIcon : item.icon,
+                          size: 20,
+                          color: isSelected
+                              ? ClassicLitTheme.oxbloodPrimary
+                              : ClassicLitTheme.inkSecondary,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          item.label,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: isSelected
+                                ? ClassicLitTheme.oxbloodPrimary
+                                : ClassicLitTheme.inkSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
           ),
         ),
       ),
