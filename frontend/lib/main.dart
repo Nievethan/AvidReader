@@ -84,6 +84,243 @@ class ClassicLitTheme {
   }
 }
 
+class BookItem {
+  final String id;
+  final String title;
+  final String author;
+  final int currentChapter;
+  final int currentPage;
+  final int totalPages;
+  final Color spineColor;
+
+  const BookItem({
+    required this.id,
+    required this.title,
+    required this.author,
+    required this.currentChapter,
+    required this.currentPage,
+    required this.totalPages,
+    required this.spineColor,
+  });
+
+  double get progress => currentPage / totalPages;
+  int get progressPercent => (progress * 100).round();
+}
+
+class ChatMessage {
+  final String text;
+  final bool isUser;
+  final List<String> citations;
+  final String? footerNote;
+
+  const ChatMessage({
+    required this.text,
+    required this.isUser,
+    this.citations = const [],
+    this.footerNote,
+  });
+}
+
+class CharacterVisual {
+  final String name;
+  final String role;
+  final String description;
+  final List<String> citations;
+  final IconData icon;
+
+  const CharacterVisual({
+    required this.name,
+    required this.role,
+    required this.description,
+    required this.citations,
+    required this.icon,
+  });
+}
+
+class PaperCard extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final Color backgroundColor;
+
+  const PaperCard({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(14),
+    this.backgroundColor = ClassicLitTheme.linenCard,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: ClassicLitTheme.deckleBorder, width: 1.2),
+      ),
+      child: child,
+    );
+  }
+}
+
+class VintageProgressBar extends StatelessWidget {
+  final double value; // 0.0 to 1.0
+  final Color fillColor;
+  final double height;
+
+  const VintageProgressBar({
+    super.key,
+    required this.value,
+    this.fillColor = ClassicLitTheme.oxbloodPrimary,
+    this.height = 8,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: ClassicLitTheme.elevatedPaper,
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: ClassicLitTheme.deckleBorder),
+      ),
+      child: FractionallySizedBox(
+        alignment: Alignment.centerLeft,
+        widthFactor: value.clamp(0.0, 1.0),
+        child: Container(
+          decoration: BoxDecoration(
+            color: fillColor,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class FilterPillRow extends StatelessWidget {
+  final List<String> options;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  const FilterPillRow({
+    super.key,
+    required this.options,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      children: List.generate(options.length, (index) {
+        final isSelected = index == selectedIndex;
+        return GestureDetector(
+          onTap: () => onSelected(index),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? ClassicLitTheme.oxbloodPrimary
+                  : ClassicLitTheme.elevatedPaper,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isSelected
+                    ? ClassicLitTheme.oxbloodPrimary
+                    : ClassicLitTheme.deckleBorder,
+                width: 1.2,
+              ),
+            ),
+            child: Text(
+              options[index],
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: isSelected
+                    ? ClassicLitTheme.inkOnPrimary
+                    : ClassicLitTheme.inkPrimary,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class BookCoverThumbnail extends StatelessWidget {
+  final String title;
+  final Color spineColor;
+  final double width;
+  final double height;
+
+  const BookCoverThumbnail({
+    super.key,
+    required this.title,
+    this.spineColor = ClassicLitTheme.oxbloodPrimary,
+    this.width = 68,
+    this.height = 96,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: ClassicLitTheme.elevatedPaper,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: ClassicLitTheme.deckleBorder, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 3,
+            offset: const Offset(1, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: double.infinity,
+            decoration: BoxDecoration(
+              color: spineColor,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(3),
+                bottomLeft: Radius.circular(3),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Center(
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: ClassicLitTheme.serifFont,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: ClassicLitTheme.inkSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class AvidReaderApp extends StatelessWidget {
   const AvidReaderApp({super.key});
 
