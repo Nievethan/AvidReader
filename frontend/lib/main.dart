@@ -402,8 +402,8 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
         onAskAiTap: () => _navigateToTab(2),
         onVisualizeTap: () => _navigateToTab(3),
       ),
-      const Center(child: Text('3. Ask AI Screen Placeholder')),
-      const Center(child: Text('4. Visualize Screen Placeholder')),
+      AskAiScreen(book: _activeBook),
+      VisualizeScreen(book: _activeBook),
       const Center(child: Text('5. Progress Screen Placeholder')),
     ];
 
@@ -1001,6 +1001,611 @@ class _ReaderScreenState extends State<ReaderScreen> {
           style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
         ),
       ),
+    );
+  }
+}
+
+class AskAiScreen extends StatefulWidget {
+  final BookItem book;
+
+  const AskAiScreen({super.key, required this.book});
+
+  @override
+  State<AskAiScreen> createState() => _AskAiScreenState();
+}
+
+class _AskAiScreenState extends State<AskAiScreen> {
+  int _selectedModeIndex = 0;
+  final TextEditingController _promptController = TextEditingController();
+
+  final List<ChatMessage> _messages = [
+    const ChatMessage(
+      text: 'Why did Raskolnikov leave the city?',
+      isUser: true,
+    ),
+    const ChatMessage(
+      text: 'He did not actually leave St. Petersburg in Chapter 7; rather, he wandered toward the Neva islands seeking temporary relief from his feverish delusions before being drawn back to the Haymarket.',
+      isUser: false,
+      citations: ['p. 84', 'p. 91'],
+      footerNote: 'Every answer cites the source text.',
+    ),
+    const ChatMessage(text: 'What if Sonya had stayed silent?', isUser: true),
+  ];
+
+  void _handleSend() {
+    final text = _promptController.text.trim();
+    if (text.isEmpty) return;
+    setState(() {
+      _messages.add(ChatMessage(text: text, isUser: true));
+      _promptController.clear();
+    });
+  }
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Top Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: ClassicLitTheme.deckleBorder),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Ask AI', style: Theme.of(context).textTheme.headlineSmall),
+              Text(
+                widget.book.title,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: ClassicLitTheme.inkSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Mode Filter Pills + Chat History
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              FilterPillRow(
+                options: const ['Study', 'Research', 'Creative'],
+                selectedIndex: _selectedModeIndex,
+                onSelected: (index) =>
+                    setState(() => _selectedModeIndex = index),
+              ),
+              const SizedBox(height: 16),
+
+              // Message Bubbles
+              ..._messages.map((msg) => _buildChatBubble(msg)),
+
+              // Retrieval Status Indicator Box
+              Align(
+                alignment: Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 260),
+                  child: const PaperCard(
+                    backgroundColor: ClassicLitTheme.elevatedPaper,
+                    padding: EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Retrieving from text...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: ClassicLitTheme.inkSecondary,
+                          ),
+                        ),
+                        SizedBox(height: 8),
+                        VintageProgressBar(
+                          value: 0.55,
+                          fillColor: ClassicLitTheme.libraryGreen,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Bottom Grounded Prompt Composer
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          decoration: const BoxDecoration(
+            color: ClassicLitTheme.parchmentBg,
+            border: Border(
+              top: BorderSide(color: ClassicLitTheme.deckleBorder),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Answers are limited to your uploaded book.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: ClassicLitTheme.inkSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 40,
+                      child: TextField(
+                        controller: _promptController,
+                        onSubmitted: (_) => _handleSend(),
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: 'Ask about this book...',
+                          hintStyle: const TextStyle(
+                            fontSize: 13,
+                            color: ClassicLitTheme.inkSecondary,
+                          ),
+                          filled: true,
+                          fillColor: ClassicLitTheme.elevatedPaper,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(4),
+                            borderSide: const BorderSide(
+                              color: ClassicLitTheme.inkPrimary,
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(4),
+                            borderSide: const BorderSide(
+                              color: ClassicLitTheme.oxbloodPrimary,
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 40,
+                    child: ElevatedButton(
+                      onPressed: _handleSend,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: ClassicLitTheme.oxbloodPrimary,
+                        foregroundColor: ClassicLitTheme.inkOnPrimary,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      child: const Text(
+                        'Send',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChatBubble(ChatMessage msg) {
+    if (msg.isUser) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12, left: 48),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: ClassicLitTheme.elevatedPaper,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: ClassicLitTheme.inkPrimary, width: 1.1),
+            ),
+            child: Text(
+              msg.text,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12, right: 24),
+      child: PaperCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(msg.text, style: const TextStyle(fontSize: 13.5, height: 1.5)),
+            if (msg.citations.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                children: msg.citations.map((cite) {
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: ClassicLitTheme.elevatedPaper,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: ClassicLitTheme.libraryGreen),
+                    ),
+                    child: Text(
+                      cite,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: ClassicLitTheme.libraryGreen,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+            if (msg.footerNote != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                msg.footerNote!,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: ClassicLitTheme.inkSecondary,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class VisualizeScreen extends StatefulWidget {
+  final BookItem book;
+
+  const VisualizeScreen({super.key, required this.book});
+
+  @override
+  State<VisualizeScreen> createState() => _VisualizeScreenState();
+}
+
+class _VisualizeScreenState extends State<VisualizeScreen> {
+  int _selectedCategoryIndex = 0;
+  int _selectedCharacterIndex = 0;
+
+  final List<CharacterVisual> _characters = const [
+    CharacterVisual(
+      name: 'Rodion Raskolnikov',
+      role: 'Former Law Student',
+      description: 'Slender, finely featured young man dressed in threadbare overcoat, feverish gaze reflecting intense philosophical turmoil.',
+      citations: ['p. 84', 'p. 91'],
+      icon: Icons.person_outline,
+    ),
+    CharacterVisual(
+      name: 'Sofya Semyonovna (Sonya)',
+      role: 'Quiet Confidante',
+      description: 'Pale, gentle countenance with clear blue eyes characterized by unwavering compassion and quiet moral resilience.',
+      citations: ['p. 98', 'p. 104'],
+      icon: Icons.favorite_border,
+    ),
+    CharacterVisual(
+      name: 'Porfiry Petrovich',
+      role: 'Examining Magistrate',
+      description: 'Stout, clean-shaven official with a shrewd, deceptively genial twinkle in his eye during psychological questioning.',
+      citations: ['p. 108', 'p. 111'],
+      icon: Icons.balance_outlined,
+    ),
+    CharacterVisual(
+      name: 'Dmitri Razumikhin',
+      role: 'Loyal University Friend',
+      description: 'Tall, expressive, energetic companion whose warmth contrasts sharply with Raskolnikov’s brooding isolation.',
+      citations: ['p. 88', 'p. 95'],
+      icon: Icons.handshake_outlined,
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final currentCharacter = _characters[_selectedCharacterIndex];
+
+    return Column(
+      children: [
+        // Top Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: ClassicLitTheme.deckleBorder),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Visualize',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              Text(
+                'Ch. ${widget.book.currentChapter}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: ClassicLitTheme.inkSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              FilterPillRow(
+                options: const ['Characters', 'Settings', 'Concept map'],
+                selectedIndex: _selectedCategoryIndex,
+                onSelected: (index) =>
+                    setState(() => _selectedCategoryIndex = index),
+              ),
+              const SizedBox(height: 14),
+
+              // Main Etching / Generated Image Canvas
+              Container(
+                height: 210,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: ClassicLitTheme.linenCard,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: ClassicLitTheme.inkPrimary,
+                    width: 1.2,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      currentCharacter.icon,
+                      size: 54,
+                      color: ClassicLitTheme.oxbloodPrimary.withValues(
+                        alpha: 0.75,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Generated image • ${currentCharacter.name}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: ClassicLitTheme.inkSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      '(19th-Century Woodcut / Etching Style)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: ClassicLitTheme.inkSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Character Details Card
+              PaperCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      currentCharacter.name,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      currentCharacter.description,
+                      style: const TextStyle(fontSize: 12.5, height: 1.45),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Based on ${currentCharacter.citations.join(', ')}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: ClassicLitTheme.libraryGreen,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Background Scene Generation Queue Card
+              const PaperCard(
+                backgroundColor: ClassicLitTheme.elevatedPaper,
+                padding: EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Generating scene... about 8 s. Keep reading meanwhile.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: ClassicLitTheme.inkSecondary,
+                      ),
+                    ),
+                    SizedBox(height: 6),
+                    VintageProgressBar(
+                      value: 0.68,
+                      fillColor: ClassicLitTheme.libraryGreen,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Regenerate & Save Buttons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Regenerating portrait for ${currentCharacter.name}...',
+                            ),
+                          ),
+                        );
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: ClassicLitTheme.inkPrimary,
+                        side: const BorderSide(
+                          color: ClassicLitTheme.inkPrimary,
+                          width: 1.2,
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      child: const Text(
+                        'Regenerate',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Saved ${currentCharacter.name} to Bookplate Gallery',
+                            ),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: ClassicLitTheme.oxbloodPrimary,
+                        foregroundColor: ClassicLitTheme.inkOnPrimary,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      child: const Text(
+                        'Save',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+              Text(
+                'CHARACTERS IN THIS CHAPTER',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+              const SizedBox(height: 8),
+
+              // 4-Item Character Thumbnail Strip
+              Row(
+                children: List.generate(_characters.length, (index) {
+                  final char = _characters[index];
+                  final isSelected = index == _selectedCharacterIndex;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      child: GestureDetector(
+                        onTap: () =>
+                            setState(() => _selectedCharacterIndex = index),
+                        child: Container(
+                          height: 68,
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? ClassicLitTheme.goldHighlightWash
+                                : ClassicLitTheme.elevatedPaper,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: isSelected
+                                  ? ClassicLitTheme.oxbloodPrimary
+                                  : ClassicLitTheme.deckleBorder,
+                              width: isSelected ? 1.6 : 1.1,
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                char.icon,
+                                size: 20,
+                                color: isSelected
+                                    ? ClassicLitTheme.oxbloodPrimary
+                                    : ClassicLitTheme.inkSecondary,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                char.name.split(' ').first,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: ClassicLitTheme.inkPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
