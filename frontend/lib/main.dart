@@ -1,6 +1,3 @@
-import 'package:device_preview/device_preview.dart';
-import 'package:device_preview/presets.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -393,14 +390,18 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
 
   @override
   Widget build(BuildContext context) {
-    // In Commit 3, tabs use temporary placeholders that we replace in Commits 4–7
     final List<Widget> screens = [
       LibraryScreen(
         activeBook: _activeBook,
         libraryBooks: _libraryBooks,
         onResumeTap: () => _navigateToTab(1),
       ),
-      const Center(child: Text('2. Reader Screen Placeholder')),
+      ReaderScreen(
+        book: _activeBook,
+        onBackTap: () => _navigateToTab(0),
+        onAskAiTap: () => _navigateToTab(2),
+        onVisualizeTap: () => _navigateToTab(3),
+      ),
       const Center(child: Text('3. Ask AI Screen Placeholder')),
       const Center(child: Text('4. Visualize Screen Placeholder')),
       const Center(child: Text('5. Progress Screen Placeholder')),
@@ -713,6 +714,293 @@ class LibraryScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class ReaderScreen extends StatefulWidget {
+  final BookItem book;
+  final VoidCallback onBackTap;
+  final VoidCallback onAskAiTap;
+  final VoidCallback onVisualizeTap;
+
+  const ReaderScreen({
+    super.key,
+    required this.book,
+    required this.onBackTap,
+    required this.onAskAiTap,
+    required this.onVisualizeTap,
+  });
+
+  @override
+  State<ReaderScreen> createState() => _ReaderScreenState();
+}
+
+class _ReaderScreenState extends State<ReaderScreen> {
+  double _fontSize = 16.0;
+  String? _activeExplanation;
+
+  void _cycleFontSize() {
+    setState(() {
+      if (_fontSize == 16.0) {
+        _fontSize = 18.5;
+      } else if (_fontSize == 18.5) {
+        _fontSize = 14.5;
+      } else {
+        _fontSize = 16.0;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Top Reader Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: ClassicLitTheme.deckleBorder),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              InkWell(
+                onTap: widget.onBackTap,
+                borderRadius: BorderRadius.circular(4),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: Text(
+                    '‹ Back',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: ClassicLitTheme.oxbloodPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  widget.book.title,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              InkWell(
+                onTap: _cycleFontSize,
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: ClassicLitTheme.deckleBorder),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    'Aa',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Reading Passage Body
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(18),
+            children: [
+              Text(
+                'On an exceptionally hot evening early in July a young man came out of the garret in which he lodged in S. Place and walked slowly, as though in hesitation, towards K. bridge.',
+                style: TextStyle(
+                  fontFamily: ClassicLitTheme.serifFont,
+                  fontSize: _fontSize,
+                  height: 1.65,
+                  color: ClassicLitTheme.inkPrimary,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Highlighted / Selected Passage Box
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: ClassicLitTheme.goldHighlightWash,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: ClassicLitTheme.antiqueGold,
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '“He had successfully avoided meeting his landlady on the staircase. His garret was under the roof of a high, five-storied house and was more like a cupboard than a room.”',
+                      style: TextStyle(
+                        fontFamily: ClassicLitTheme.serifFont,
+                        fontSize: _fontSize,
+                        fontStyle: FontStyle.italic,
+                        height: 1.6,
+                        color: ClassicLitTheme.inkPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Selected passage',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: ClassicLitTheme.inkSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // 4-Button Contextual Selection Toolbar
+              Row(
+                children: [
+                  _buildSelectionActionButton(
+                    label: 'Explain',
+                    onTap: () {
+                      setState(() {
+                        _activeExplanation = 'Dostoevsky uses the cramped “cupboard” garret as an architectural mirror of Raskolnikov’s claustrophobic psychological isolation (p. 112).';
+                      });
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  _buildSelectionActionButton(
+                    label: 'Ask AI',
+                    onTap: widget.onAskAiTap,
+                  ),
+                  const SizedBox(width: 6),
+                  _buildSelectionActionButton(
+                    label: 'Visualize',
+                    onTap: widget.onVisualizeTap,
+                  ),
+                  const SizedBox(width: 6),
+                  _buildSelectionActionButton(
+                    label: 'Note',
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Saved passage to Chapter 7 margin notes',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+
+              if (_activeExplanation != null) ...[
+                const SizedBox(height: 12),
+                PaperCard(
+                  backgroundColor: ClassicLitTheme.elevatedPaper,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.auto_stories,
+                        size: 16,
+                        color: ClassicLitTheme.oxbloodPrimary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _activeExplanation!,
+                          style: const TextStyle(fontSize: 12.5, height: 1.45),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 18),
+              Text(
+                'The landlady who provided him with garret, dinners, and attendance, lived on the floor below, and every time he went out he was obliged to pass her kitchen, the door of which invariably stood open. And each time he passed, the young man had a sick, frightened feeling, which made him scowl and feel ashamed.',
+                style: TextStyle(
+                  fontFamily: ClassicLitTheme.serifFont,
+                  fontSize: _fontSize,
+                  height: 1.65,
+                  color: ClassicLitTheme.inkPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Bottom Chapter Progress Footer Card
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: PaperCard(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'p. ${widget.book.currentPage} / ${widget.book.totalPages}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: ClassicLitTheme.inkSecondary,
+                      ),
+                    ),
+                    Text(
+                      'Ch. ${widget.book.currentChapter}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: ClassicLitTheme.inkPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                VintageProgressBar(value: widget.book.progress),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSelectionActionButton({
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: OutlinedButton(
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: ClassicLitTheme.inkPrimary,
+          backgroundColor: ClassicLitTheme.elevatedPaper,
+          side: const BorderSide(color: ClassicLitTheme.inkPrimary, width: 1.1),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+        ),
+      ),
     );
   }
 }
