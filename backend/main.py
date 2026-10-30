@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+"""Backward-compatible entry point.
 
-app = FastAPI(title="AI Reading Dashboard API")
+The real app now lives in app/main.py (app.main:app). This shim exists
+so `uvicorn main:app` (as documented in the original README) keeps
+working for anyone with that command memorized.
+"""
+from app.main import app
 
-@app.get("/")
-def read_root():
-    return {"status": "Backend, Neo4j, and Qdrant are active."}
+__all__ = ["app"]
