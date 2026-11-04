@@ -1,4 +1,10 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+
+import 'api_client.dart';
+
+// Not final so tests can swap in an ApiClient backed by a fake server.
+ApiClient api = ApiClient();
 
 void main() {
   runApp(const AvidReaderApp());
@@ -87,7 +93,10 @@ class BookItem {
   final String author;
   final int currentChapter;
   final int currentPage;
-  final int totalPages;
+  // Null until the backend's parser knows the real page count.
+  final int? totalPages;
+  final double? percentComplete;
+  final String processingStatus;
   final Color spineColor;
 
   const BookItem({
@@ -98,10 +107,53 @@ class BookItem {
     required this.currentPage,
     required this.totalPages,
     required this.spineColor,
+    this.percentComplete,
+    this.processingStatus = 'ready',
   });
 
-  double get progress => currentPage / totalPages;
+  static const List<Color> _spinePalette = [
+    ClassicLitTheme.oxbloodPrimary,
+    ClassicLitTheme.libraryGreen,
+    Color(0xFF4A3B32),
+    Color(0xFF5B3246),
+  ];
+
+  factory BookItem.fromApi(ApiBook b) => BookItem(
+    id: b.id,
+    title: b.title,
+    author: b.author ?? 'Unknown author',
+    currentChapter: b.currentChapter ?? 1,
+    currentPage: b.currentPage ?? 0,
+    totalPages: b.totalPages,
+    percentComplete: b.percentComplete,
+    processingStatus: b.processingStatus,
+    spineColor:
+        _spinePalette[b.id.hashCode.abs() % _spinePalette.length],
+  );
+
+  BookItem copyWith({int? currentPage, double? percentComplete}) => BookItem(
+    id: id,
+    title: title,
+    author: author,
+    currentChapter: currentChapter,
+    currentPage: currentPage ?? this.currentPage,
+    totalPages: totalPages,
+    percentComplete: percentComplete ?? this.percentComplete,
+    processingStatus: processingStatus,
+    spineColor: spineColor,
+  );
+
+  bool get isProcessed => processingStatus == 'ready';
+
+  double get progress {
+    if (percentComplete != null) return (percentComplete! / 100).clamp(0, 1).toDouble();
+    final total = totalPages;
+    if (total == null || total == 0) return 0;
+    return (currentPage / total).clamp(0, 1).toDouble();
+  }
+
   int get progressPercent => (progress * 100).round();
+  String get pagesLabel => 'p. $currentPage / ${totalPages ?? '?'}';
 }
 
 class ChatMessage {
@@ -342,45 +394,107 @@ class ReadingDashboardShell extends StatefulWidget {
 class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   int _selectedIndex = 0;
 
-  final BookItem _activeBook = const BookItem(
-    id: 'book-1',
-    title: 'Crime and Punishment',
-    author: 'Fyodor Dostoevsky',
-    currentChapter: 7,
-    currentPage: 112,
-    totalPages: 320,
-    spineColor: ClassicLitTheme.oxbloodPrimary,
-  );
+  List<BookItem> _books = [];
+  String? _activeBookId;
+  bool _loading = true;
+  bool _uploading = false;
+  String? _error;
 
-  final List<BookItem> _libraryBooks = const [
-    BookItem(
-      id: 'book-2',
-      title: 'Jane Eyre',
-      author: 'Charlotte Brontë',
-      currentChapter: 4,
-      currentPage: 64,
-      totalPages: 410,
-      spineColor: ClassicLitTheme.libraryGreen,
-    ),
-    BookItem(
-      id: 'book-3',
-      title: 'The Odyssey',
-      author: 'Homer',
-      currentChapter: 1,
-      currentPage: 12,
-      totalPages: 380,
-      spineColor: Color(0xFF4A3B32),
-    ),
-    BookItem(
-      id: 'book-4',
-      title: 'Middlemarch',
-      author: 'George Eliot',
-      currentChapter: 12,
-      currentPage: 215,
-      totalPages: 520,
-      spineColor: Color(0xFF5B3246),
-    ),
-  ];
+  BookItem? get _activeBook {
+    if (_books.isEmpty) return null;
+    return _books.firstWhere(
+      (b) => b.id == _activeBookId,
+      orElse: () => _books.first,
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBooks();
+  }
+
+  Future<void> _loadBooks() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final apiBooks = await api.listBooks();
+      setState(() {
+        _books = apiBooks.map(BookItem.fromApi).toList();
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    }
+  }
+
+  void _showSnack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _uploadBook() async {
+        final file = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'epub'],
+    );
+    if (file == null) return; // user cancelled
+
+    setState(() => _uploading = true);
+    try {
+      final bytes = await file.readAsBytes();
+      final uploaded = await api.uploadBook(
+        bytes: bytes,
+        filename: file.name,
+        title: file.name.replaceAll(RegExp(r'\.(pdf|epub)$', caseSensitive: false), ''),
+      );
+      _activeBookId = uploaded.id;
+      await _loadBooks();
+      _showSnack('Uploaded "${uploaded.title}"');
+    } on ApiException catch (e) {
+      _showSnack('Upload failed: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  void _selectBook(String id) {
+    setState(() => _activeBookId = id);
+    _navigateToTab(1);
+  }
+
+  Future<void> _changePage(int delta) async {
+    final book = _activeBook;
+    if (book == null) return;
+    final newPage = (book.currentPage + delta).clamp(0, book.totalPages ?? 1 << 30).toInt();
+    final total = book.totalPages;
+    final percent = (total != null && total > 0) ? newPage / total * 100 : null;
+
+    // Optimistic update so the UI feels instant; reverted on failure.
+    final before = _books;
+    setState(() {
+      _books = _books
+          .map((b) => b.id == book.id
+              ? b.copyWith(currentPage: newPage, percentComplete: percent)
+              : b)
+          .toList();
+    });
+    try {
+      await api.updateProgress(
+        book.id,
+        currentPage: newPage,
+        percentComplete: percent,
+      );
+    } on ApiException catch (e) {
+      setState(() => _books = before);
+      _showSnack('Could not save progress: ${e.message}');
+    }
+  }
 
   void _navigateToTab(int index) {
     setState(() {
@@ -388,23 +502,63 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
     });
   }
 
+  Widget _needsBook(Widget Function(BookItem book) builder) {
+    final book = _activeBook;
+    if (book != null) return builder(book);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.menu_book_outlined,
+              size: 40,
+              color: ClassicLitTheme.inkSecondary,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Upload a book in the Library tab to get started.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: ClassicLitTheme.inkSecondary),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () => _navigateToTab(0),
+              child: const Text('Go to Library'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> screens = [
       LibraryScreen(
         activeBook: _activeBook,
-        libraryBooks: _libraryBooks,
+        libraryBooks: _books,
+        isLoading: _loading,
+        isUploading: _uploading,
+        error: _error,
+        onRetry: _loadBooks,
+        onUploadTap: _uploadBook,
+        onBookTap: _selectBook,
         onResumeTap: () => _navigateToTab(1),
       ),
-      ReaderScreen(
-        book: _activeBook,
-        onBackTap: () => _navigateToTab(0),
-        onAskAiTap: () => _navigateToTab(2),
-        onVisualizeTap: () => _navigateToTab(3),
+      _needsBook(
+        (book) => ReaderScreen(
+          book: book,
+          onBackTap: () => _navigateToTab(0),
+          onAskAiTap: () => _navigateToTab(2),
+          onVisualizeTap: () => _navigateToTab(3),
+          onPageChange: _changePage,
+        ),
       ),
-      AskAiScreen(book: _activeBook),
-      VisualizeScreen(book: _activeBook),
-      ProgressScreen(book: _activeBook),
+      _needsBook((book) => AskAiScreen(book: book)),
+      _needsBook((book) => VisualizeScreen(book: book)),
+      _needsBook((book) => ProgressScreen(book: book)),
     ];
 
     return Scaffold(
@@ -508,16 +662,67 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
 }
 
 class LibraryScreen extends StatelessWidget {
-  final BookItem activeBook;
+  final BookItem? activeBook;
   final List<BookItem> libraryBooks;
+  final bool isLoading;
+  final bool isUploading;
+  final String? error;
+  final VoidCallback onRetry;
+  final VoidCallback onUploadTap;
+  final ValueChanged<String> onBookTap;
   final VoidCallback onResumeTap;
 
   const LibraryScreen({
     super.key,
     required this.activeBook,
     required this.libraryBooks,
+    required this.isLoading,
+    required this.isUploading,
+    required this.error,
+    required this.onRetry,
+    required this.onUploadTap,
+    required this.onBookTap,
     required this.onResumeTap,
   });
+
+  Widget _buildBody(BuildContext context) {
+    if (isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: ClassicLitTheme.oxbloodPrimary),
+      );
+    }
+    if (error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off, size: 36, color: ClassicLitTheme.oxbloodPrimary),
+              const SizedBox(height: 10),
+              Text(error!, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+            ],
+          ),
+        ),
+      );
+    }
+    final book = activeBook;
+    if (book == null) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'No books yet. Tap Upload to add a PDF or EPUB.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: ClassicLitTheme.inkSecondary),
+          ),
+        ),
+      );
+    }
+    return _buildLibrary(context, book);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -539,15 +744,15 @@ class LibraryScreen extends StatelessWidget {
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               OutlinedButton.icon(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Select an EPUB or PDF file to upload'),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Upload'),
+                onPressed: isUploading ? null : onUploadTap,
+                icon: isUploading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add, size: 16),
+                label: Text(isUploading ? 'Uploading…' : 'Upload'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: ClassicLitTheme.inkPrimary,
                   side: const BorderSide(
@@ -568,8 +773,13 @@ class LibraryScreen extends StatelessWidget {
         ),
 
         // Scrollable Body
-        Expanded(
-          child: ListView(
+        Expanded(child: _buildBody(context)),
+      ],
+    );
+  }
+
+  Widget _buildLibrary(BuildContext context, BookItem activeBook) {
+    return ListView(
             padding: const EdgeInsets.all(16),
             children: [
               Text(
@@ -610,7 +820,7 @@ class LibraryScreen extends StatelessWidget {
                           VintageProgressBar(value: activeBook.progress),
                           const SizedBox(height: 6),
                           Text(
-                            '${activeBook.progressPercent}% • p. ${activeBook.currentPage} / ${activeBook.totalPages}',
+                            '${activeBook.progressPercent}% • ${activeBook.pagesLabel}',
                             style: const TextStyle(
                               fontSize: 11,
                               color: ClassicLitTheme.inkSecondary,
@@ -648,53 +858,64 @@ class LibraryScreen extends StatelessWidget {
 
               const SizedBox(height: 14),
 
-              // Knowledge Graph Ingestion Card
-              PaperCard(
-                backgroundColor: ClassicLitTheme.elevatedPaper,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
-                      'Processing "The_Brothers_Karamazov.epub"',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
+              // Ingestion status card: only shown while the book isn't
+              // processed. Status text comes straight from the backend.
+              if (!activeBook.isProcessed)
+                PaperCard(
+                  backgroundColor: ClassicLitTheme.elevatedPaper,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '"${activeBook.title}" is ${activeBook.processingStatus}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
                       ),
-                    ),
-                    SizedBox(height: 8),
-                    VintageProgressBar(
-                      value: 38 / 120,
-                      fillColor: ClassicLitTheme.libraryGreen,
-                    ),
-                    SizedBox(height: 6),
-                    Text(
-                      'Building knowledge graph... 38 / 120 pages. You can keep reading.',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: ClassicLitTheme.inkSecondary,
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Text parsing and the knowledge graph aren\'t connected yet, so AI answers are placeholders for now.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: ClassicLitTheme.inkSecondary,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
 
               const SizedBox(height: 20),
               Text('YOUR BOOKS', style: Theme.of(context).textTheme.labelSmall),
               const SizedBox(height: 10),
 
-              // 3-Column Book Grid
-              Row(
+              // 3-Column Book Grid (wraps onto new rows as books are added)
+              GridView.count(
+                crossAxisCount: 3,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+                childAspectRatio: 0.62,
                 children: libraryBooks.map((book) {
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: GestureDetector(
-                        onTap: onResumeTap,
-                        child: BookCoverThumbnail(
-                          title: book.title,
-                          spineColor: book.spineColor,
-                          height: 118,
+                  final isActive = book.id == activeBook.id;
+                  return GestureDetector(
+                    onTap: () => onBookTap(book.id),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: isActive
+                              ? ClassicLitTheme.antiqueGold
+                              : Colors.transparent,
+                          width: 2,
                         ),
+                      ),
+                      child: BookCoverThumbnail(
+                        title: book.title,
+                        spineColor: book.spineColor,
+                        width: double.infinity,
+                        height: double.infinity,
                       ),
                     ),
                   );
@@ -703,7 +924,7 @@ class LibraryScreen extends StatelessWidget {
 
               const SizedBox(height: 16),
               const Text(
-                'Supports PDF and EPUB. Uploads are private, encrypted, and deleted after your session.',
+                'Supports PDF and EPUB. Tap a book to open it.',
                 style: TextStyle(
                   fontSize: 11,
                   color: ClassicLitTheme.inkSecondary,
@@ -711,9 +932,6 @@ class LibraryScreen extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ],
     );
   }
 }
@@ -723,6 +941,7 @@ class ReaderScreen extends StatefulWidget {
   final VoidCallback onBackTap;
   final VoidCallback onAskAiTap;
   final VoidCallback onVisualizeTap;
+  final ValueChanged<int> onPageChange;
 
   const ReaderScreen({
     super.key,
@@ -730,6 +949,7 @@ class ReaderScreen extends StatefulWidget {
     required this.onBackTap,
     required this.onAskAiTap,
     required this.onVisualizeTap,
+    required this.onPageChange,
   });
 
   @override
@@ -737,8 +957,43 @@ class ReaderScreen extends StatefulWidget {
 }
 
 class _ReaderScreenState extends State<ReaderScreen> {
+  // Sample passage until the backend can return real book text
+  // (GET /books/{id}/content is "not_available" until ingestion exists).
+  static const String _samplePassage =
+      'He had successfully avoided meeting his landlady on the staircase. His garret was under the roof of a high, five-storied house and was more like a cupboard than a room.';
+
   double _fontSize = 16.0;
   String? _activeExplanation;
+  bool _explaining = false;
+
+  @override
+  void didUpdateWidget(covariant ReaderScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.book.id != widget.book.id) _activeExplanation = null;
+  }
+
+  Future<void> _explainPassage() async {
+    setState(() {
+      _explaining = true;
+      _activeExplanation = 'Thinking…';
+    });
+    try {
+      final result = await api.chat(
+        bookId: widget.book.id,
+        question: 'Explain this passage.',
+        mode: 'study',
+        interactionType: 'explain',
+        selectedPassage: _samplePassage,
+        currentPage: widget.book.currentPage,
+        currentChapter: widget.book.currentChapter,
+      );
+      setState(() => _activeExplanation = result.answer);
+    } on ApiException catch (e) {
+      setState(() => _activeExplanation = 'Couldn\'t get an explanation: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _explaining = false);
+    }
+  }
 
   void _cycleFontSize() {
     setState(() {
@@ -820,6 +1075,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
           child: ListView(
             padding: const EdgeInsets.all(18),
             children: [
+              if (!widget.book.isProcessed) ...[
+                const Text(
+                  'Showing a sample passage: real book text appears once ingestion is connected.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: ClassicLitTheme.inkSecondary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               Text(
                 'On an exceptionally hot evening early in July a young man came out of the garret in which he lodged in S. Place and walked slowly, as though in hesitation, towards K. bridge.',
                 style: TextStyle(
@@ -846,7 +1112,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '“He had successfully avoided meeting his landlady on the staircase. His garret was under the roof of a high, five-storied house and was more like a cupboard than a room.”',
+                      '“$_samplePassage”',
                       style: TextStyle(
                         fontFamily: ClassicLitTheme.serifFont,
                         fontSize: _fontSize,
@@ -874,11 +1140,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 children: [
                   _buildSelectionActionButton(
                     label: 'Explain',
-                    onTap: () {
-                      setState(() {
-                        _activeExplanation = 'Dostoevsky uses the cramped “cupboard” garret as an architectural mirror of Raskolnikov’s claustrophobic psychological isolation (p. 112).';
-                      });
-                    },
+                    onTap: _explaining ? () {} : _explainPassage,
                   ),
                   const SizedBox(width: 6),
                   _buildSelectionActionButton(
@@ -897,7 +1159,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                            'Saved passage to Chapter 7 margin notes',
+                            'Notes aren\'t connected to the backend yet',
                           ),
                         ),
                       );
@@ -954,14 +1216,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    IconButton(
+                      tooltip: 'Previous page',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.chevron_left, size: 20),
+                      onPressed: widget.book.currentPage > 0
+                          ? () => widget.onPageChange(-1)
+                          : null,
+                    ),
                     Text(
-                      'p. ${widget.book.currentPage} / ${widget.book.totalPages}',
+                      widget.book.pagesLabel,
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: ClassicLitTheme.inkSecondary,
                       ),
                     ),
+                    IconButton(
+                      tooltip: 'Next page',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.chevron_right, size: 20),
+                      onPressed: () => widget.onPageChange(1),
+                    ),
+                    const Spacer(),
                     Text(
                       'Ch. ${widget.book.currentChapter}',
                       style: const TextStyle(
@@ -1018,27 +1295,72 @@ class _AskAiScreenState extends State<AskAiScreen> {
   int _selectedModeIndex = 0;
   final TextEditingController _promptController = TextEditingController();
 
-  final List<ChatMessage> _messages = [
-    const ChatMessage(
-      text: 'Why did Raskolnikov leave the city?',
-      isUser: true,
-    ),
-    const ChatMessage(
-      text: 'He did not actually leave St. Petersburg in Chapter 7; rather, he wandered toward the Neva islands seeking temporary relief from his feverish delusions before being drawn back to the Haymarket.',
-      isUser: false,
-      citations: ['p. 84', 'p. 91'],
-      footerNote: 'Every answer cites the source text.',
-    ),
-    const ChatMessage(text: 'What if Sonya had stayed silent?', isUser: true),
-  ];
+  static const List<String> _modes = ['study', 'research', 'creative'];
 
-  void _handleSend() {
+  final List<ChatMessage> _messages = [];
+  String? _conversationId;
+  bool _sending = false;
+
+  @override
+  void didUpdateWidget(covariant AskAiScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // New book, new conversation: the backend rejects a conversation_id
+    // that belongs to a different book.
+    if (oldWidget.book.id != widget.book.id) {
+      _messages.clear();
+      _conversationId = null;
+    }
+  }
+
+  Future<void> _handleSend() async {
     final text = _promptController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _sending) return;
     setState(() {
       _messages.add(ChatMessage(text: text, isUser: true));
       _promptController.clear();
+      _sending = true;
     });
+
+    final lower = text.toLowerCase();
+    final interactionType = lower.startsWith('what if')
+        ? 'what_if'
+        : (lower.startsWith('what happens next') ? 'story_continues' : 'question');
+
+    try {
+      final result = await api.chat(
+        bookId: widget.book.id,
+        conversationId: _conversationId,
+        question: text,
+        mode: _modes[_selectedModeIndex],
+        interactionType: interactionType,
+        currentPage: widget.book.currentPage,
+        currentChapter: widget.book.currentChapter,
+      );
+      final notes = [
+        if (result.isHypothetical) 'Hypothetical: not what happens in the book.',
+        if (result.providerStatus == 'mock')
+          'Mock AI: real retrieval isn\'t connected yet.',
+      ];
+      setState(() {
+        _conversationId = result.conversationId;
+        _messages.add(
+          ChatMessage(
+            text: result.answer,
+            isUser: false,
+            citations: result.citations,
+            footerNote: notes.isEmpty ? null : notes.join(' '),
+          ),
+        );
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _messages.add(
+          ChatMessage(text: 'Something went wrong: ${e.message}', isUser: false),
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   @override
@@ -1091,7 +1413,18 @@ class _AskAiScreenState extends State<AskAiScreen> {
               // Message Bubbles
               ..._messages.map((msg) => _buildChatBubble(msg)),
 
-              // Retrieval Status Indicator Box
+              if (_messages.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'Ask anything about this book. Start with "What if…" for a hypothetical.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: ClassicLitTheme.inkSecondary),
+                  ),
+                ),
+
+              // Retrieval Status Indicator Box (only while waiting)
+              if (_sending)
               Align(
                 alignment: Alignment.centerLeft,
                 child: ConstrainedBox(
