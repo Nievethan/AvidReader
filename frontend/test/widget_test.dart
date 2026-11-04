@@ -1,46 +1,107 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:frontend/api_client.dart';
 import 'package:frontend/main.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+const _bookId = '40fae399-b025-4bc3-a17f-f51ba31fc493';
+
+/// Fake backend that answers like the real FastAPI routes in docs/API_CONTRACT.md.
+http.Client _fakeBackend() => MockClient((req) async {
+  final path = req.url.path;
+  if (req.method == 'GET' && path == '/api/v1/books') {
+    return http.Response(
+      jsonEncode({
+        'items': [
+          {
+            'id': _bookId,
+            'title': 'Test Book',
+            'author': 'Capstone Team',
+            'filename': 'test.pdf',
+            'file_type': 'pdf',
+            'processing_status': 'uploaded',
+            'total_pages': null,
+          },
+        ],
+        'total': 1,
+      }),
+      200,
+    );
+  }
+  if (req.method == 'GET' && path == '/api/v1/books/$_bookId/progress') {
+    return http.Response(
+      jsonEncode({
+        'book_id': _bookId,
+        'current_page': 3,
+        'current_chapter': 1,
+        'location': null,
+        'percent_complete': null,
+        'updated_at': null,
+      }),
+      200,
+    );
+  }
+  if (req.method == 'POST' && path == '/api/v1/ai/chat') {
+    return http.Response(
+      jsonEncode({
+        'conversation_id': 'conv-1',
+        'message_id': 'msg-1',
+        'book_id': _bookId,
+        'answer': '[MOCK RESPONSE] hello',
+        'answer_type': 'mock',
+        'provider_status': 'mock',
+        'is_hypothetical': false,
+        'citations': [],
+        'spoiler_scope': {'restricted_to_progress': false, 'reason': ''},
+        'created_at': '2026-10-30T15:19:59.613607',
+      }),
+      200,
+    );
+  }
+  return http.Response('{"error":{"code":"NOT_FOUND","message":"nope"}}', 404);
+});
 
 void main() {
+  setUp(() => api = ApiClient(client: _fakeBackend()));
+
   testWidgets('AvidReader 5-tab navigation smoke test', (
     WidgetTester tester,
   ) async {
-    // Build our app and trigger a frame.
     await tester.pumpWidget(const AvidReaderApp());
+    await tester.pumpAndSettle();
 
-    //Test for if library screen is visible and has the correct text
+    // Library shows the book loaded from the (fake) backend
     expect(find.text('My Library'), findsOneWidget);
     expect(find.text('CONTINUE READING'), findsOneWidget);
+    expect(find.text('Test Book'), findsWidgets);
 
-    // Testing if resume button works and takes user to the correct screen
+    // Resume opens the reader
     await tester.tap(find.text('Resume'));
     await tester.pumpAndSettle();
     expect(find.text('Selected passage'), findsOneWidget);
+    expect(find.text('p. 3 / ?'), findsOneWidget);
 
-    // Testing if ask AI button works and takes user to the correct screen
+    // Ask AI sends a question and shows the backend's answer
     await tester.tap(find.byIcon(Icons.auto_awesome_outlined));
     await tester.pumpAndSettle();
     expect(find.byType(AskAiScreen), findsOneWidget);
-    expect(find.text('Every answer cites the source text.'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Who is the narrator?');
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle();
+    expect(find.text('[MOCK RESPONSE] hello'), findsOneWidget);
 
-    // Testing if visualize button works and takes user to the correct screen
+    // Visualize
     await tester.tap(find.byIcon(Icons.palette_outlined));
     await tester.pumpAndSettle();
     expect(find.byType(VisualizeScreen), findsOneWidget);
-
-    // Testing if the user can scroll down to see the "CHARACTERS IN THIS CHAPTER" text
     await tester.drag(find.byType(VisualizeScreen), const Offset(0, -300));
     await tester.pumpAndSettle();
     expect(find.text('CHARACTERS IN THIS CHAPTER'), findsOneWidget);
 
-    // Testing if progress button works and takes user to the correct screen
+    // Progress
     await tester.tap(find.text('Progress').last);
     await tester.pumpAndSettle();
     expect(find.byType(ProgressScreen), findsOneWidget);
