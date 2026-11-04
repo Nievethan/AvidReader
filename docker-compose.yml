@@ -1,11 +1,10 @@
-version: '3.8'
 
 services:
   # Core API -- CPU-only, no external services required to start.
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
       - backend_data:/app/data
@@ -26,7 +25,7 @@ services:
     image: qdrant/qdrant:latest
     profiles: ["full"]
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
 
@@ -36,8 +35,8 @@ services:
     image: neo4j:5.12.0
     profiles: ["full"]
     ports:
-      - "7474:7474" # HTTP interface
-      - "7687:7687" # Bolt protocol
+      - "127.0.0.1:7474:7474" # HTTP interface
+      - "127.0.0.1:7687:7687" # Bolt protocol
     environment:
       # Never hardcode a real password. Set NEO4J_PASSWORD in a local
       # .env file (see backend/.env.example); this placeholder is for
