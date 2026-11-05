@@ -31,3 +31,7 @@ frontend/.flutter-plugins-dependencies
 frontend/build/
 frontend/.pub-cache/
 frontend/.pub/
+
+# Test coverage output
+.coverage
+htmlcov/
