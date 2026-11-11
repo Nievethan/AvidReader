@@ -26,6 +26,16 @@ class ReadingBoundary:
     current_page: int | None = None
     current_chapter: int | None = None
     location: str | None = None
+    # Resolved spoiler limit in the book's own unit (page for PDF, chapter
+    # for EPUB). None = no limit. When unset, retrieval falls back to
+    # current_page, then current_chapter.
+    max_position: int | None = None
+
+    @property
+    def limit(self) -> int | None:
+        if self.max_position is not None:
+            return self.max_position
+        return self.current_page if self.current_page is not None else self.current_chapter
 
 
 @dataclass(frozen=True)
@@ -34,8 +44,12 @@ class RetrievedPassage:
     chunk_id: str
     text: str
     source_location: str  # e.g. "chapter 7" or "page 112"
-    order_index: int  # position in reading order, used for spoiler filtering
+    order_index: int  # position in reading order
     relevance_score: float | None = None
+    page_start: int | None = None  # PDFs only
+    page_end: int | None = None
+    chapter: int | None = None
+    chapter_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,6 +58,7 @@ class IngestionResult:
     status: str  # "uploaded" | "processing" | "ready" | "failed" | "unsupported"
     total_pages: int | None = None
     error: str | None = None
+    chunk_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -61,9 +76,11 @@ class GenerationRequest:
 @dataclass(frozen=True)
 class GeneratedAnswer:
     answer: str
-    answer_type: str  # "mock" | "grounded" | "hypothetical"
+    answer_type: str  # "grounded" | "hypothetical" | "refusal" | "unavailable" | "mock"
     is_hypothetical: bool
     citations: list[dict] = field(default_factory=list)
+    # "ok" | "fake" | "no_evidence" | "book_not_ready" | "provider_error" | "mock"
+    provider_status: str = "ok"
 
 
 @dataclass(frozen=True)
@@ -83,13 +100,24 @@ class IngestionProvider(Protocol):
 
     async def ingest(self, book_id: str, file_path: str, file_type: str) -> IngestionResult: ...
 
+    def remove(self, book_id: str) -> None:
+        """Delete everything ingestion stored for a book. Must not raise."""
+        ...
+
 
 class RetrievalProvider(Protocol):
     """Owned by Umer. Vector/keyword retrieval over a book's indexed content."""
 
     async def retrieve(
-        self, book_id: str, question: str, reading_boundary: ReadingBoundary, limit: int = 5
+        self, book_id: str, question: str, reading_boundary: ReadingBoundary, limit: int | None = None
     ) -> list[RetrievedPassage]: ...
+
+    async def list_chunks(
+        self, book_id: str, reading_boundary: ReadingBoundary, last_n: int | None = None
+    ) -> list[RetrievedPassage]:
+        """Every passage up to the boundary in reading order (or only the
+        last n). For features that need coverage rather than a top-k search."""
+        ...
 
 
 class AnswerProvider(Protocol):

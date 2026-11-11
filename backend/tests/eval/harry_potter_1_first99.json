@@ -1,0 +1,30 @@
+{
+  "book": "Harry Potter and the Sorcerer's Stone, pages 2-100 of the full PDF (SplitPDF.pdf, 99 pages; not committed)",
+  "default_book": "SplitPDF.pdf",
+  "notes": "Cheaper evaluation set: ~40% of the full book's embedding cost. Gold pages are this file's page numbers (full-book page - 1). Questions about events after page 99 must be refused. A citation counts as a hit if it overlaps a gold page +/- 1. 'keywords' is any-of, case-insensitive.",
+  "questions": [
+    {"id": "q01", "type": "answerable", "question": "Where do the Dursleys live?", "gold_pages": [1, 25], "keywords": ["privet drive"]},
+    {"id": "q02", "type": "answerable", "question": "What strange thing did Mr. Dursley see on the corner of the street?", "gold_pages": [2], "keywords": ["cat", "map"]},
+    {"id": "q03", "type": "answerable", "question": "Who tells Harry that he is a wizard?", "gold_pages": [39], "keywords": ["hagrid"]},
+    {"id": "q04", "type": "answerable", "question": "Where does Harry sleep in the Dursleys' house?", "gold_pages": [14, 25], "keywords": ["cupboard"]},
+    {"id": "q05", "type": "answerable", "question": "Where did the Dursleys take Dudley for his birthday?", "gold_pages": [17, 19], "keywords": ["zoo"]},
+    {"id": "q06", "type": "answerable", "question": "What is Harry's wand made of?", "gold_pages": [66], "keywords": ["holly", "phoenix"]},
+    {"id": "q07", "type": "answerable", "question": "Which vault did Hagrid visit at Gringotts on Dumbledore's business?", "gold_pages": [57, 59], "keywords": ["713", "seven hundred and thirteen"]},
+    {"id": "q08", "type": "answerable", "question": "What did Hagrid buy Harry as a birthday present in Diagon Alley?", "gold_pages": [64], "keywords": ["owl"]},
+    {"id": "q09", "type": "answerable", "question": "Which platform does the Hogwarts Express leave from?", "gold_pages": [68, 69, 70, 71, 73], "keywords": ["three-quarters", "three quarters", "9 3/4", "9¾"]},
+    {"id": "q10", "type": "answerable", "question": "Into which house is Harry sorted?", "gold_pages": [97], "keywords": ["gryffindor"]},
+    {"id": "q11", "type": "answerable", "question": "Which other house did the Sorting Hat consider for Harry?", "gold_pages": [97], "keywords": ["slytherin"]},
+    {"id": "q12", "type": "answerable", "question": "Which nervous young professor did Harry meet in the Leaky Cauldron?", "gold_pages": [54], "keywords": ["quirrell"]},
+
+    {"id": "u01", "type": "unanswerable", "question": "What form does Harry's Patronus take?"},
+    {"id": "u02", "type": "unanswerable", "question": "What is the capital of France?"},
+    {"id": "u03", "type": "unanswerable", "question": "What did Hagrid name his baby dragon?"},
+    {"id": "u04", "type": "unanswerable", "question": "What did Neville's gran send him in the post?"},
+
+    {"id": "s01", "type": "spoiler", "question": "Into which house is Harry sorted?", "current_page": 60, "forbidden": ["gryffindor"]},
+    {"id": "s02", "type": "spoiler", "question": "What is Harry's wand made of?", "current_page": 40, "forbidden": ["holly", "phoenix"]},
+
+    {"id": "h01", "type": "hypothetical", "interaction_type": "what_if", "question": "What if Harry had been sorted into Slytherin?", "current_page": 99},
+    {"id": "h02", "type": "hypothetical", "interaction_type": "story_continues", "question": "Continue the story.", "current_page": 22}
+  ]
+}

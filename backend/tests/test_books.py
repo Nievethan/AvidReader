@@ -15,7 +15,8 @@ def test_upload_pdf_persists_truthful_metadata(client):
     assert body["title"] == "Sample Book"
     assert body["author"] == "Jane Doe"
     assert body["file_type"] == "pdf"
-    assert body["processing_status"] == "uploaded"
+    # Step 6: upload returns at once; indexing runs in the background.
+    assert body["processing_status"] == "processing"
     assert body["total_pages"] is None  # must not fabricate a page count
 
 

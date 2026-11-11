@@ -25,7 +25,8 @@ async def chat(
     db: Session = Depends(get_db),
     service: AIService = Depends(get_ai_service),
 ) -> ChatResponse:
-    assistant_message = await service.chat(db, request)
+    outcome = await service.chat(db, request)
+    assistant_message = outcome.message
     return ChatResponse(
         conversation_id=assistant_message.conversation_id,
         message_id=assistant_message.id,
@@ -36,8 +37,8 @@ async def chat(
         is_hypothetical=assistant_message.is_hypothetical,
         citations=assistant_message.citations,
         spoiler_scope=SpoilerScope(
-            restricted_to_progress=False,
-            reason="RAG retrieval provider is not connected yet; no spoiler boundary is enforced.",
+            restricted_to_progress=outcome.spoiler.restricted,
+            reason=outcome.spoiler.reason,
         ),
         created_at=assistant_message.created_at,
     )

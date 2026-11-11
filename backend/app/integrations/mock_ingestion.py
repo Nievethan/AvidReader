@@ -12,3 +12,6 @@ from app.integrations.interfaces import IngestionResult
 class MockIngestionProvider:
     async def ingest(self, book_id: str, file_path: str, file_type: str) -> IngestionResult:
         return IngestionResult(book_id=book_id, status="uploaded", total_pages=None, error=None)
+
+    def remove(self, book_id: str) -> None:
+        """Nothing was stored, so there is nothing to remove."""

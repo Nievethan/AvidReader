@@ -27,6 +27,20 @@ class ChatRequest(BaseModel):
     explanation_level: ExplanationLevel = "standard"
 
 
+class Citation(BaseModel):
+    """One source behind an answer. `marker` matches the [S#] in the text."""
+
+    marker: str | None = None
+    chunk_id: str
+    page_start: int | None = None
+    page_end: int | None = None
+    page: int | None = None  # = page_start; kept for the current frontend chip
+    chapter: int | None = None
+    source_location: str
+    snippet: str
+    score: float | None = None
+
+
 class SpoilerScope(BaseModel):
     restricted_to_progress: bool
     reason: str
@@ -40,7 +54,7 @@ class ChatResponse(BaseModel):
     answer_type: str
     provider_status: str
     is_hypothetical: bool
-    citations: list[dict]
+    citations: list[Citation]
     spoiler_scope: SpoilerScope
     created_at: datetime
 
@@ -51,7 +65,7 @@ class MessageResponse(BaseModel):
     content: str
     answer_type: str | None = None
     is_hypothetical: bool
-    citations: list[dict]
+    citations: list[Citation]
     created_at: datetime
 
 

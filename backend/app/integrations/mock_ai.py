@@ -30,4 +30,5 @@ class MockAnswerProvider:
             answer_type=answer_type,
             is_hypothetical=is_hypothetical,
             citations=[],
+            provider_status="mock",
         )

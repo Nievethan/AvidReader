@@ -21,7 +21,8 @@ def test_rag_defaults(monkeypatch):
     for name in RAG_ENV:
         monkeypatch.delenv(name, raising=False)
     s = config.get_settings()
-    assert (s.cloudflare_account_id, s.cloudflare_api_token, s.cloudflare_text_model) == ("", "", "")
+    assert (s.cloudflare_account_id, s.cloudflare_api_token) == ("", "")
+    assert s.cloudflare_text_model == "@cf/meta/llama-3.3-70b-instruct-fp8-fast"  # Step 8 default
     assert s.cloudflare_embedding_model == "@cf/baai/bge-base-en-v1.5"
     assert s.embedding_dimension == 768
     assert (s.embedding_batch_size, s.embedding_concurrency, s.embedding_backend) == (32, 4, "auto")

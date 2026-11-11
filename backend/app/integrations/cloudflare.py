@@ -2,8 +2,8 @@
 
 Gitae's prototype script calls the REST API with blocking `httpx.post`,
 which would freeze the FastAPI event loop. This module is the async home for
-both embedding (written here, Umer) and chat generation (Gitae adds
-`generate` on top of `run`).
+both embedding (`embed`) and chat generation (`generate`); Gitae's feature
+prompts reuse `generate`.
 
 REST shape (settled by the prototype):
   POST https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/{MODEL}
@@ -11,6 +11,9 @@ REST shape (settled by the prototype):
   -> {"success": bool, "result": {...}, "errors": [...]}
 
 Embedding models take {"text": [...]} and return result.data = [[...], ...].
+Chat models take {"messages": [...], "max_tokens": n} and return either
+result.response (classic models) or result.choices[0].message.content
+(OpenAI-compatible models).
 [Verify against current Cloudflare docs: request/response shape, batch limit
 (100 texts for bge models), max input tokens.]
 """
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -26,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.cloudflare.com/client/v4"
 _RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+# Reasoning models may emit their hidden reasoning; it is never shown to users.
+_THINK_BLOCK = re.compile(r"<think>.*?(</think>|$)", re.DOTALL | re.IGNORECASE)
 
 
 class CloudflareError(Exception):
@@ -67,14 +73,25 @@ class CloudflareClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def run(self, model: str, payload: dict) -> dict:
+    async def run(
+        self,
+        model: str,
+        payload: dict,
+        *,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ) -> dict:
         """POST to /ai/run/{model}; returns the `result` object. Retries
-        429/5xx/timeouts with exponential backoff (honouring Retry-After)."""
+        429/5xx/timeouts with exponential backoff (honouring Retry-After).
+        `timeout` / `max_retries` override the client defaults for one call
+        (the interactive Q&A path uses a short timeout and few retries)."""
         url = f"/accounts/{self._account_id}/ai/run/{model}"
+        retries = self._max_retries if max_retries is None else max_retries
+        request_kwargs = {"timeout": timeout} if timeout is not None else {}
         attempt = 0
         while True:
             try:
-                response = await self._http.post(url, json=payload)
+                response = await self._http.post(url, json=payload, **request_kwargs)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 error = CloudflareError(f"Cloudflare request failed: {type(exc).__name__}", retryable=True)
                 retry_after = None
@@ -87,7 +104,7 @@ class CloudflareClient:
                     status_code=response.status_code,
                     retryable=response.status_code in _RETRYABLE_STATUS,
                 )
-            if not error.retryable or attempt >= self._max_retries:
+            if not error.retryable or attempt >= retries:
                 raise error
             delay = retry_after if retry_after is not None else self._backoff_base * (2**attempt)
             logger.warning("Cloudflare call failed (%s); retry %d in %.1fs", error, attempt + 1, delay)
@@ -100,6 +117,35 @@ class CloudflareClient:
         if not isinstance(data, list):
             raise CloudflareError("Unexpected embedding response: missing result.data")
         return data
+
+    async def generate(
+        self,
+        model: str,
+        messages: list[dict],
+        *,
+        max_tokens: int,
+        temperature: float = 0.2,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ) -> str:
+        """Chat completion; returns the reply text with any <think> block removed."""
+        result = await self.run(
+            model,
+            {"messages": messages, "max_tokens": max_tokens, "temperature": temperature},
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        text = result.get("response")
+        if text is None:
+            try:
+                text = result["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                text = None
+        if not isinstance(text, str):
+            raise CloudflareError(
+                "Chat model returned no answer text (a reasoning model may have spent max_tokens on reasoning)."
+            )
+        return _THINK_BLOCK.sub("", text).strip()
 
     @staticmethod
     def _parse_result(response: httpx.Response) -> dict:
