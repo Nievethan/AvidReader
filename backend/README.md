@@ -92,7 +92,7 @@ to start. The important ones:
 | Variable | Default | Purpose |
 |---|---|---|
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | blank | Workers AI credentials. Blank = offline fallbacks |
-| `CLOUDFLARE_TEXT_MODEL` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Chat model for answers (invalid values fall back to the default) |
+| `CLOUDFLARE_TEXT_MODEL` | `@cf/qwen/qwen3-30b-a3b-fp8` | Chat model for answers (invalid values fall back to the default). `@cf/meta/llama-3.3-70b-instruct-fp8-fast` also works: slightly more accurate in our benchmark but slower |
 | `CLOUDFLARE_EMBEDDING_MODEL`, `EMBEDDING_DIMENSION` | `@cf/baai/bge-base-en-v1.5`, `768` | Embedding model; pinned to the Qdrant collection |
 | `EMBEDDING_BACKEND`, `ANSWER_BACKEND` | `auto` | `auto` / `cloudflare` / `fake` |
 | `QDRANT_URL` | blank | Qdrant server. Blank = embedded Qdrant in `QDRANT_LOCAL_PATH` |
