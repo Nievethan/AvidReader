@@ -20,6 +20,16 @@ def _build_client(tmp_path, monkeypatch, **extra_env: str) -> TestClient:
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("UPLOADS_DIR", str(uploads_dir))
     monkeypatch.setenv("APP_ENV", "test")
+    # Fully offline RAG stack, whatever the developer's backend/.env says:
+    # fake embeddings, extractive offline answers, in-memory Qdrant.
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "")
+    monkeypatch.setenv("EMBEDDING_BACKEND", "fake")
+    monkeypatch.setenv("ANSWER_BACKEND", "fake")
+    monkeypatch.setenv("QDRANT_URL", "")
+    monkeypatch.setenv("QDRANT_LOCAL_PATH", ":memory:")
+    monkeypatch.setenv("EXTRACTED_DIR", str(tmp_path / "extracted"))
+    monkeypatch.setenv("RETRIEVAL_MIN_SCORE", "0.05")
     for key, value in extra_env.items():
         monkeypatch.setenv(key, value)
 
@@ -30,9 +40,7 @@ def _build_client(tmp_path, monkeypatch, **extra_env: str) -> TestClient:
     import app.db.database as database_module
 
     config_module.get_settings.cache_clear()
-    deps_module.get_book_service.cache_clear()
-    deps_module.get_progress_service.cache_clear()
-    deps_module.get_ai_service.cache_clear()
+    deps_module.reset_caches()
 
     settings = config_module.get_settings()
     engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
@@ -79,3 +87,31 @@ def make_minimal_epub_bytes() -> bytes:
         zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
         zf.writestr("META-INF/container.xml", "<container/>")
     return buffer.getvalue()
+
+
+def make_story_pdf_bytes(tmp_path, *, with_toc: bool = True) -> bytes:
+    """A real 8-page PDF with text on every page (same story as the RAG
+    fixtures), for end-to-end API tests."""
+    from tests.rag.conftest import build_pdf
+
+    return build_pdf(tmp_path / "story-upload.pdf", with_toc=with_toc).read_bytes()
+
+
+def make_story_epub_bytes(tmp_path) -> bytes:
+    from tests.rag.conftest import build_epub
+
+    path = build_epub(
+        tmp_path / "story-upload.epub",
+        [
+            ("Chapter One", ["The lighthouse keeper counted the ships every evening.", "None ever came."]),
+            ("Chapter Two", ["A ship finally appeared on the horizon carrying a stranger."]),
+            ("Chapter Three", ["The stranger revealed that the lighthouse was built on a wreck."]),
+        ],
+    )
+    return path.read_bytes()
+
+
+def upload(client, data: bytes, filename: str = "book.pdf", mime: str = "application/pdf", **form) -> dict:
+    response = client.post("/api/v1/books", files={"file": (filename, data, mime)}, data=form)
+    assert response.status_code == 201, response.text
+    return response.json()

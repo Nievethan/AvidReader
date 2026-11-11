@@ -15,8 +15,10 @@ def test_ready_reports_database_and_optional_dependencies(client):
     assert body["status"] == "ready"
     assert body["database"]["status"] == "ok"
 
+    # Step 6: Qdrant is checked for real (in-memory embedded mode in tests).
+    assert body["vector_store"] == {"configured": True, "mode": "memory", "status": "ok"}
+
     optional = body["optional_dependencies"]
-    assert optional["qdrant"]["configured"] is False
-    assert optional["qdrant"]["status"] == "not_checked"
+    assert "qdrant" not in optional
     assert optional["neo4j"]["configured"] is False
     assert optional["neo4j"]["status"] == "not_checked"

@@ -10,7 +10,7 @@ Ensure you have the following installed on your machine:
 * **Docker & Docker Compose**: To run the full stack via the provided `docker-compose.yml` file.
 
 
-* **Python 3.x**: If running the backend locally.
+* **Python 3.11**: If running the backend locally (matches the Dockerfile; 3.14 cannot build the pinned pydantic).
 
 
 * **Flutter SDK**: If running the frontend locally, as indicated by the `pubspec.yaml` file.
@@ -31,15 +31,17 @@ cd AvidReader
 Since the project root contains a `docker-compose.yml` and the backend contains a `Dockerfile`, you can spin up the entire environment at once:
 
 ```bash
-docker-compose up --build
+docker compose up --build
 
 ```
+
+This starts the backend and Qdrant (vector database). Add `--profile full` to also start Neo4j. For real AI answers, put Cloudflare Workers AI credentials in `backend/.env` (see `backend/.env.example`); without them the backend runs with offline fallbacks.
 
 **3. Manual Local Setup (Alternative)**
 If you need to run the services individually without Docker:
 
 * **Backend Setup:**
-The backend requires several AI and database dependencies, including `fastapi`, `uvicorn`, `langgraph`, `llama-index`, `neo4j`, and `qdrant-client`.
+Dependencies are listed in `backend/requirements.txt` (FastAPI, SQLAlchemy, PyMuPDF, EbookLib, qdrant-client, httpx, ...). Without Docker, Qdrant runs embedded under `backend/data/qdrant`. Full backend docs, including the RAG pipeline, endpoints and the evaluation script, are in [`backend/README.md`](backend/README.md).
 
 
 ```bash
@@ -47,7 +49,8 @@ cd backend
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload
+cp .env.example .env      # add Cloudflare credentials for real AI answers
+uvicorn app.main:app --reload
 
 ```
 

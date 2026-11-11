@@ -33,6 +33,10 @@ class Book(Base):
     processing_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     total_pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Number of chunks indexed in the vector store (None until ingestion finishes).
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # How many times ingestion has started; caps automatic retries after a restart.
+    ingestion_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

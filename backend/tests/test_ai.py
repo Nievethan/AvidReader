@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.conftest import make_minimal_pdf_bytes
+from tests.conftest import make_minimal_pdf_bytes, make_story_pdf_bytes, upload
 
 
 def _upload_book(client) -> str:
@@ -11,7 +11,9 @@ def _upload_book(client) -> str:
     return response.json()["id"]
 
 
-def test_chat_mock_response_is_clearly_labeled(client):
+def test_chat_on_book_without_text_says_so_truthfully(client):
+    # The minimal fixture PDF is a blank page: ingestion marks it unsupported,
+    # and chat must say so instead of inventing an answer (was a mock before Step 8).
     book_id = _upload_book(client)
 
     response = client.post(
@@ -21,22 +23,22 @@ def test_chat_mock_response_is_clearly_labeled(client):
     assert response.status_code == 200
     body = response.json()
 
-    assert body["answer_type"] == "mock"
-    assert body["provider_status"] == "mock"
+    assert body["answer_type"] == "unavailable"
+    assert body["provider_status"] == "book_not_ready"
     assert body["is_hypothetical"] is False
     assert body["citations"] == []
     assert body["spoiler_scope"]["restricted_to_progress"] is False
-    assert "MOCK" in body["answer"]
+    assert "no extractable text" in body["answer"]
 
 
-def test_creative_interaction_is_marked_hypothetical(client):
-    book_id = _upload_book(client)
+def test_creative_interaction_is_marked_hypothetical(client, tmp_path):
+    book_id = upload(client, make_story_pdf_bytes(tmp_path))["id"]
 
     response = client.post(
         "/api/v1/ai/chat",
         json={
             "book_id": book_id,
-            "question": "What if the ending were different?",
+            "question": "What if Mira had not warned the elders about the treaty?",
             "mode": "creative",
             "interaction_type": "what_if",
         },
@@ -45,6 +47,7 @@ def test_creative_interaction_is_marked_hypothetical(client):
     body = response.json()
     assert body["is_hypothetical"] is True
     assert body["answer_type"] == "hypothetical"
+    assert body["citations"]
 
 
 def test_chat_persists_conversation_and_is_retrievable(client):

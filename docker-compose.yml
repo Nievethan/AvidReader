@@ -1,6 +1,7 @@
 
 services:
-  # Core API -- CPU-only, no external services required to start.
+  # Core API -- CPU-only. Cloudflare credentials are read from backend/.env
+  # (mounted with the code); without them it uses offline fallbacks.
   backend:
     build: ./backend
     ports:
@@ -12,18 +13,19 @@ services:
       - APP_ENV=local
       - DATABASE_URL=sqlite:///./data/avidreader.db
       - UPLOADS_DIR=./data/uploads
-      # Blank by default: optional integrations below are opt-in via the
-      # "full" profile. /ready reports them as "not configured" when unset.
-      - QDRANT_URL=
+      # Book vectors live in the qdrant service below.
+      - QDRANT_URL=http://qdrant:6333
+      # Neo4j stays opt-in via the "full" profile; blank = not configured.
       - NEO4J_URI=
       - NEO4J_USER=
       - NEO4J_PASSWORD=
+    depends_on:
+      - qdrant
 
-  # Vector database for semantic search (Umer). Optional: only starts
-  # with `docker compose --profile full up`.
+  # Vector database for semantic search (Umer). Always starts: uploads are
+  # indexed into it and chat retrieves from it.
   qdrant:
     image: qdrant/qdrant:latest
-    profiles: ["full"]
     ports:
       - "127.0.0.1:6333:6333"
     volumes:
