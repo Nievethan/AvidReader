@@ -27,7 +27,7 @@ question ─► spoiler limit ─► retrieve top 8 chunks (position <= limit) �
 
 Models (Cloudflare Workers AI):
 - **Embeddings:** `@cf/baai/bge-base-en-v1.5` (768 dimensions), unchanged from Step 4.
-- **Chat:** default `@cf/meta/llama-3.3-70b-instruct-fp8-fast`; `@cf/qwen/qwen3-30b-a3b-fp8` is supported and benchmarked (faster, see Step 9). Chosen with `CLOUDFLARE_TEXT_MODEL`.
+- **Chat:** default `@cf/qwen/qwen3-30b-a3b-fp8` (the only benchmarked model under the 2.5 s p95 target, see Step 9); `@cf/meta/llama-3.3-70b-instruct-fp8-fast` is supported as a slightly more accurate but slower alternative. Chosen with `CLOUDFLARE_TEXT_MODEL`.
 
 ## Step 6: ingestion wired into upload and delete
 
@@ -88,8 +88,10 @@ Model benchmark (same 12 questions, top-k 8):
 
 | Model | Correct | p50 | p95 |
 |---|---|---|---|
-| `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (default) | 11/12 | 1.86 s | 3.88 s |
-| `@cf/qwen/qwen3-30b-a3b-fp8` | 10/12 | 0.76 s | 0.92 s |
+| `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | 11/12 | 1.86 s | 3.88 s |
+| `@cf/qwen/qwen3-30b-a3b-fp8` (chosen as default) | 10/12 | 0.76 s | 0.92 s |
+
+Qwen3 was made the default because it is the only one under the 2.5 s p95 latency target; the accuracy gap was one question out of 12.
 
 99-page `SplitPDF.pdf`, Qwen3, 4 questions (q01, q02, u01, s01): 129 chunks in 2.1 s; retrieval 2/2; all 4 passed (two cited answers, a correct refusal, spoiler limit held at page 60); p50 0.68 s, p95 0.82 s.
 
@@ -136,7 +138,7 @@ Model benchmark (same 12 questions, top-k 8):
 ### New settings (`backend/.env`)
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLOUDFLARE_TEXT_MODEL` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Chat model |
+| `CLOUDFLARE_TEXT_MODEL` | `@cf/qwen/qwen3-30b-a3b-fp8` | Chat model (Llama 3.3 is the alternative) |
 | `ANSWER_BACKEND` | `auto` | `auto` / `cloudflare` / `fake` |
 | `QDRANT_LOCAL_PATH` | `data/qdrant` | Embedded Qdrant folder when `QDRANT_URL` is blank |
 | `EXTRACTED_DIR` | `data/extracted` | Saved reader text |
@@ -166,7 +168,7 @@ Neither PDF is committed; both sit at the repo root locally.
 
 ## Known limitations and open items (Steps 6-9)
 
-- **Latency (ER-02):** Llama 3.3 misses the 2.5 s p95 target; Qwen3 meets it in the benchmark. The default model is a team decision (one line in `.env`).
+- **Latency (ER-02):** the default is now Qwen3, which met the 2.5 s p95 target in the benchmark (0.92 s) and in the 99-page run (0.82 s). The full-book evaluation table above was run with Llama 3.3, which misses the target; it has not been re-run with Qwen3. Confirm the model choice with the team (one line in `.env`).
 - **Coverage:** the Step 6-8 code has tests (180 total pass), but no coverage report was run for Steps 6-9, and the new prompt, citation, retrieval, grounded-answer and chat-model modules have no dedicated unit tests yet (deliberately deferred). Steps 1-5 were measured at 100%.
 - **Cloudflare quota:** the free plan allows 10,000 neurons per day. One full 250-page evaluation costs roughly 3,000-4,000; indexing a book once costs roughly 800 (250 pages) or 300-400 (99 pages). Embeddings are not cached yet, so re-uploading a book re-embeds it.
 - **Retries on quota errors:** a 429 "daily free allocation used up" is retried like a normal rate limit, which wastes requests.

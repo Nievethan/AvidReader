@@ -23,7 +23,8 @@ DEFAULT_CORS_ORIGINS = ["http://localhost", "http://127.0.0.1", "http://10.0.2.2
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 DEFAULT_EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
 DEFAULT_EMBEDDING_DIMENSION = 768
-# Chat model for grounded answers; chosen by scripts/benchmark_chat.py.
+# Chat model for grounded answers. Qwen3 was the only benchmarked model under
+# the 2.5 s p95 latency target (ER-02); see `scripts/eval_rag.py --models`.
 DEFAULT_TEXT_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"
 DEFAULT_QDRANT_LOCAL_PATH = BACKEND_ROOT / "data" / "qdrant"
 DEFAULT_EXTRACTED_DIR = BACKEND_ROOT / "data" / "extracted"
