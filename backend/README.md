@@ -25,7 +25,7 @@ in yet -- those are explicit integration points for Umer and Gitae
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
 copy .env.example .env
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -36,7 +36,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
 cp .env.example .env
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -104,8 +104,7 @@ backend/
 │   ├── integrations/           # Protocols + mock providers for Umer/Gitae
 │   └── api/v1/                 # route handlers
 ├── tests/
-├── requirements.txt            # runtime deps only
-├── requirements-dev.txt         # + pytest/httpx
+├── requirements.txt            # app + test dependencies (incl. pytest)
 └── main.py                      # compatibility shim -> app.main:app
 ```
 
