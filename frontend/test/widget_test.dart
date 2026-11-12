@@ -22,8 +22,8 @@ http.Client _fakeBackend() => MockClient((req) async {
             'author': 'Capstone Team',
             'filename': 'test.pdf',
             'file_type': 'pdf',
-            'processing_status': 'uploaded',
-            'total_pages': null,
+            'processing_status': 'ready',
+            'total_pages': 10,
           },
         ],
         'total': 1,
@@ -44,6 +44,20 @@ http.Client _fakeBackend() => MockClient((req) async {
       200,
     );
   }
+  if (req.method == 'GET' && path == '/api/v1/books/$_bookId/content') {
+    return http.Response(
+      jsonEncode({
+        'book_id': _bookId,
+        'status': 'ready',
+        'content': 'The real backend returned this page of the book.',
+        'unit': 'page',
+        'index': 3,
+        'total': 10,
+        'title': null,
+      }),
+      200,
+    );
+  }
   if (req.method == 'POST' && path == '/api/v1/ai/chat') {
     return http.Response(
       jsonEncode({
@@ -51,8 +65,8 @@ http.Client _fakeBackend() => MockClient((req) async {
         'message_id': 'msg-1',
         'book_id': _bookId,
         'answer': '[MOCK RESPONSE] hello',
-        'answer_type': 'mock',
-        'provider_status': 'mock',
+        'answer_type': 'grounded',
+        'provider_status': 'ok',
         'is_hypothetical': false,
         'citations': [],
         'spoiler_scope': {'restricted_to_progress': false, 'reason': ''},
@@ -81,8 +95,11 @@ void main() {
     // Resume opens the reader
     await tester.tap(find.text('Resume'));
     await tester.pumpAndSettle();
-    expect(find.text('Selected passage'), findsOneWidget);
-    expect(find.text('p. 3 / ?'), findsOneWidget);
+    expect(
+      find.text('The real backend returned this page of the book.'),
+      findsOneWidget,
+    );
+    expect(find.text('p. 3 / 10'), findsOneWidget);
 
     // Ask AI sends a question and shows the backend's answer
     await tester.tap(find.byIcon(Icons.auto_awesome_outlined));

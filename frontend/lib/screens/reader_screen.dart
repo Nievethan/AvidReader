@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
@@ -29,22 +31,114 @@ class ReaderScreen extends StatefulWidget {
 }
 
 class _ReaderScreenState extends State<ReaderScreen> {
-  // Sample passage until the backend can return real book text
-  // (GET /books/{id}/content is "not_available" until ingestion exists).
-  static const String _samplePassage =
-      'He had successfully avoided meeting his landlady on the staircase. His garret was under the roof of a high, five-storied house and was more like a cupboard than a room.';
-
   double _fontSize = 16.0;
   String? _activeExplanation;
   bool _explaining = false;
+
+  BookContent? _page;
+  IngestionStatus? _ingestion;
+  bool _loading = true;
+  String? _error;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
   @override
   void didUpdateWidget(covariant ReaderScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.book.id != widget.book.id) _activeExplanation = null;
+    if (oldWidget.book.id != widget.book.id ||
+        oldWidget.book.currentPage != widget.book.currentPage ||
+        oldWidget.book.currentChapter != widget.book.currentChapter ||
+        oldWidget.book.processingStatus != widget.book.processingStatus) {
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  // Not ready yet: check ingestion status and, while still "processing",
+  // poll every 2s until it flips to ready/failed/unsupported.
+  Future<void> _load() async {
+    _pollTimer?.cancel();
+    setState(() {
+      _loading = true;
+      _error = null;
+      _page = null;
+    });
+
+    if (widget.book.processingStatus == 'ready') {
+      await _loadContent();
+      return;
+    }
+
+    try {
+      final ingestion = await api.getIngestionStatus(widget.book.id);
+      if (!mounted) return;
+      setState(() {
+        _ingestion = ingestion;
+        _loading = false;
+      });
+      if (ingestion.status == 'processing') {
+        _pollTimer = Timer(const Duration(seconds: 2), _load);
+      } else if (ingestion.status == 'ready') {
+        await _loadContent();
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadContent() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final isEpub = widget.book.fileType.toLowerCase() == 'epub';
+      final result = isEpub
+          ? await api.getContent(
+              widget.book.id,
+              // Chapters are already 1-based throughout the app.
+              chapter: widget.book.currentChapter < 1
+                  ? 1
+                  : widget.book.currentChapter,
+            )
+          : await api.getContent(
+              widget.book.id,
+              // currentPage is 0-based ("p. 0 / 99" at the start) but
+              // /content is 1-based, so it's always off by one.
+              page: widget.book.currentPage + 1,
+            );
+      if (!mounted) return;
+      setState(() {
+        _page = result;
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _explainPassage() async {
+    final passage = _page?.content;
+    if (passage == null || passage.isEmpty) return;
     setState(() {
       _explaining = true;
       _activeExplanation = 'Thinking…';
@@ -55,7 +149,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         question: 'Explain this passage.',
         mode: 'study',
         interactionType: 'explain',
-        selectedPassage: _samplePassage,
+        selectedPassage: passage,
         currentPage: widget.book.currentPage,
         currentChapter: widget.book.currentChapter,
       );
@@ -149,64 +243,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           child: ListView(
             padding: const EdgeInsets.all(18),
             children: [
-              if (!widget.book.isProcessed) ...[
-                const Text(
-                  'Showing a sample passage: real book text appears once ingestion is connected.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontStyle: FontStyle.italic,
-                    color: ClassicLitTheme.inkSecondary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-              Text(
-                'On an exceptionally hot evening early in July a young man came out of the garret in which he lodged in S. Place and walked slowly, as though in hesitation, towards K. bridge.',
-                style: TextStyle(
-                  fontFamily: ClassicLitTheme.serifFont,
-                  fontSize: _fontSize,
-                  height: 1.65,
-                  color: ClassicLitTheme.inkPrimary,
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Highlighted / Selected Passage Box
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: ClassicLitTheme.goldHighlightWash,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: ClassicLitTheme.antiqueGold,
-                    width: 1.5,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '“$_samplePassage”',
-                      style: TextStyle(
-                        fontFamily: ClassicLitTheme.serifFont,
-                        fontSize: _fontSize,
-                        fontStyle: FontStyle.italic,
-                        height: 1.6,
-                        color: ClassicLitTheme.inkPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Selected passage',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: ClassicLitTheme.inkSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              ..._buildPassageContent(),
               const SizedBox(height: 10),
 
               // 4-Button Contextual Selection Toolbar
@@ -214,7 +251,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 children: [
                   _buildSelectionActionButton(
                     label: 'Explain',
-                    onTap: _explaining ? () {} : _explainPassage,
+                    onTap: (_explaining || (_page?.content ?? '').isEmpty)
+                        ? () {}
+                        : _explainPassage,
                   ),
                   const SizedBox(width: 6),
                   _buildSelectionActionButton(
@@ -266,16 +305,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 ),
               ],
 
-              const SizedBox(height: 18),
-              Text(
-                'The landlady who provided him with garret, dinners, and attendance, lived on the floor below, and every time he went out he was obliged to pass her kitchen, the door of which invariably stood open. And each time he passed, the young man had a sick, frightened feeling, which made him scowl and feel ashamed.',
-                style: TextStyle(
-                  fontFamily: ClassicLitTheme.serifFont,
-                  fontSize: _fontSize,
-                  height: 1.65,
-                  color: ClassicLitTheme.inkPrimary,
-                ),
-              ),
             ],
           ),
         ),
@@ -332,6 +361,63 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ],
     );
   }
+
+  List<Widget> _buildPassageContent() {
+    if (_loading) {
+      return const [
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ];
+    }
+
+    if (_error != null) {
+      return [_statusMessage('Couldn\'t load this page: $_error')];
+    }
+
+    // Trust what the Reader itself fetched, not widget.book.processingStatus:
+    // the dashboard's book list isn't re-polled after upload, so it can stay
+    // stuck on "processing" long after ingestion has actually finished.
+    final content = _page?.content;
+    if (content == null || content.isEmpty) {
+      final ingestion = _ingestion;
+      final message = switch (ingestion?.status) {
+        'processing' => 'Still indexing this book — checking again shortly…',
+        'failed' => ingestion?.message ?? 'Indexing this book failed.',
+        'unsupported' =>
+          ingestion?.message ?? 'This book format isn\'t supported yet.',
+        'ready' => 'No text found for this page.',
+        _ => 'This book isn\'t ready to read yet.',
+      };
+      return [_statusMessage(message)];
+    }
+
+    return [
+      Text(
+        content,
+        style: TextStyle(
+          fontFamily: ClassicLitTheme.serifFont,
+          fontSize: _fontSize,
+          height: 1.65,
+          color: ClassicLitTheme.inkPrimary,
+        ),
+      ),
+      const SizedBox(height: 16),
+    ];
+  }
+
+  Widget _statusMessage(String text) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 24),
+    child: Text(
+      text,
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        fontStyle: FontStyle.italic,
+        color: ClassicLitTheme.inkSecondary,
+      ),
+    ),
+  );
 
   Widget _buildSelectionActionButton({
     required String label,

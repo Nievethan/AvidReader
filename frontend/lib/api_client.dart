@@ -67,6 +67,54 @@ class ApiBook {
   );
 }
 
+/// `GET /books/{id}/ingestion`: processing status while a book indexes.
+class IngestionStatus {
+  final String status; // uploaded | processing | ready | failed | unsupported
+  final String? message;
+  final int? totalPages;
+  final int? chunkCount;
+
+  IngestionStatus({
+    required this.status,
+    this.message,
+    this.totalPages,
+    this.chunkCount,
+  });
+
+  factory IngestionStatus.fromJson(Map<String, dynamic> json) =>
+      IngestionStatus(
+        status: json['status'] as String,
+        message: json['message'] as String?,
+        totalPages: json['total_pages'] as int?,
+        chunkCount: json['chunk_count'] as int?,
+      );
+}
+
+/// `GET /books/{id}/content`: the real extracted text of one page/chapter.
+class BookContent {
+  final String status; // ready | processing | not_available
+  final String? content;
+  final String? reason;
+  final int? index;
+  final int? total;
+
+  BookContent({
+    required this.status,
+    this.content,
+    this.reason,
+    this.index,
+    this.total,
+  });
+
+  factory BookContent.fromJson(Map<String, dynamic> json) => BookContent(
+    status: json['status'] as String,
+    content: json['content'] as String?,
+    reason: json['reason'] as String?,
+    index: json['index'] as int?,
+    total: json['total'] as int?,
+  );
+}
+
 class ChatResult {
   final String conversationId;
   final String answer;
@@ -167,6 +215,26 @@ class ApiClient {
     if (author != null && author.isNotEmpty) req.fields['author'] = author;
     final res = await http.Response.fromStream(await _http.send(req));
     return ApiBook.fromJson((_decode(res) as Map).cast<String, dynamic>());
+  });
+
+  Future<IngestionStatus> getIngestionStatus(String bookId) => _guard(() async {
+    final data = _decode(
+      await _http.get(_uri('/api/v1/books/$bookId/ingestion')),
+    );
+    return IngestionStatus.fromJson((data as Map).cast<String, dynamic>());
+  });
+
+  /// Pass exactly one of `page` (PDF, 1-based) or `chapter` (EPUB, 1-based).
+  Future<BookContent> getContent(
+    String bookId, {
+    int? page,
+    int? chapter,
+  }) => _guard(() async {
+    final query = page != null ? 'page=$page' : 'chapter=$chapter';
+    final data = _decode(
+      await _http.get(_uri('/api/v1/books/$bookId/content?$query')),
+    );
+    return BookContent.fromJson((data as Map).cast<String, dynamic>());
   });
 
   Future<ChatResult> chat({
