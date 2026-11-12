@@ -14,7 +14,7 @@ from app.db import database
 from app.integrations.interfaces import IngestionProvider, IngestionResult
 from app.models.books import Book
 from app.rag.extracted_store import ExtractedTextStore
-from app.repositories import book_repository
+from app.repositories import ai_repository, book_repository, character_graph_repository, engagement_repository
 from app.schemas.books import BookContentResponse
 from app.services.file_validation import detect_file_type, sanitize_filename
 
@@ -195,6 +195,9 @@ class BookService:
     def delete_book(self, db: Session, book_id: str) -> None:
         book = self.get_book_or_404(db, book_id)
         path = Path(book.stored_path)
+        engagement_repository.delete_for_book(db, book_id)
+        character_graph_repository.delete_for_book(db, book_id)
+        ai_repository.delete_for_book(db, book_id)
         book_repository.delete_book(db, book)
         if path.exists():
             path.unlink()

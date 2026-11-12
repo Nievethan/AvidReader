@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.ai import Conversation, Message
@@ -23,3 +24,15 @@ def add_message(db: Session, conversation_id: str, **fields) -> Message:
     db.commit()
     db.refresh(message)
     return message
+
+
+def count_user_messages(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(Message).where(Message.role == "user")) or 0
+
+
+def delete_for_book(db: Session, book_id: str) -> None:
+    """Removes a deleted book's conversations (and their messages, via the
+    model's cascade) -- otherwise they linger as orphaned rows forever."""
+    for conversation in db.scalars(select(Conversation).where(Conversation.book_id == book_id)):
+        db.delete(conversation)
+    db.commit()

@@ -6,18 +6,23 @@ import logging
 from functools import lru_cache
 
 from app.core.config import Settings, get_settings
+from app.integrations.character_graph import LLMCharacterGraphProvider, NotAvailableCharacterGraphProvider
 from app.integrations.cloudflare import CloudflareClient
 from app.integrations.grounded_answer import GroundedAnswerProvider
+from app.integrations.interfaces import CharacterGraphProvider
 from app.integrations.rag_ingestion import RagIngestionProvider
 from app.integrations.rag_retrieval import RagRetrievalProvider
 from app.rag.chunking import ChunkingConfig
 from app.rag.embeddings import EmbeddingProvider, build_embedding_provider
 from app.rag.extracted_store import ExtractedTextStore
-from app.rag.llm import build_chat_model
+from app.rag.llm import CloudflareChatModel, build_chat_model
 from app.rag.vector_store import QdrantVectorStore, build_vector_store
+from app.services.achievements_service import AchievementsService
 from app.services.ai_service import AIService
 from app.services.book_service import BookService
 from app.services.progress_service import ProgressService
+from app.services.reading_log_service import ReadingLogService
+from app.services.word_wall_service import WordWallService
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +92,39 @@ def get_book_service() -> BookService:
 
 
 @lru_cache
+def get_reading_log_service() -> ReadingLogService:
+    return ReadingLogService()
+
+
+@lru_cache
 def get_progress_service() -> ProgressService:
-    return ProgressService()
+    return ProgressService(reading_log_service=get_reading_log_service())
+
+
+@lru_cache
+def get_word_wall_service() -> WordWallService:
+    return WordWallService()
+
+
+@lru_cache
+def get_achievements_service() -> AchievementsService:
+    return AchievementsService()
+
+
+@lru_cache
+def get_character_graph_provider() -> CharacterGraphProvider:
+    settings = get_settings()
+    client = get_cloudflare_client()
+    if client is None:
+        return NotAvailableCharacterGraphProvider()
+    chat_model = CloudflareChatModel(
+        client, settings.cloudflare_text_model, timeout=settings.character_map_timeout_seconds
+    )
+    return LLMCharacterGraphProvider(
+        retrieval_provider=get_retrieval_provider(),
+        chat_model=chat_model,
+        max_tokens=settings.character_map_max_tokens,
+    )
 
 
 @lru_cache
@@ -111,7 +147,11 @@ _CACHED = (
     get_retrieval_provider,
     get_answer_provider,
     get_book_service,
+    get_reading_log_service,
     get_progress_service,
+    get_word_wall_service,
+    get_achievements_service,
+    get_character_graph_provider,
     get_ai_service,
 )
 
