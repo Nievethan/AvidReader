@@ -299,17 +299,184 @@ are not HTTP errors; they return `answer_type: "unavailable"`.
 
 ---
 
+## Word Wall
+
+### `POST /api/v1/books/{book_id}/words`
+
+```json
+{"word": "lugubrious", "meaning": "mournful", "quote": "a lugubrious sigh", "source_location": "page 4"}
+```
+
+Only `word` is required (1-200 chars); `meaning`, `quote`, `source_location`
+are all optional free text. There is no AI behind this yet -- the caller
+(frontend, or a future call to `/ai/chat` with `interaction_type: "explain"`)
+supplies the meaning itself; the backend only persists it.
+
+**201 Created:**
+
+```json
+{
+  "id": "f6ac45b8-...",
+  "book_id": "40fae399-...",
+  "word": "lugubrious",
+  "meaning": "mournful",
+  "quote": "a lugubrious sigh",
+  "source_location": "page 4",
+  "created_at": "2026-11-12T01:30:49.419375"
+}
+```
+
+### `GET /api/v1/books/{book_id}/words`
+
+```json
+{"items": [ { "...": "same shape as above" } ], "total": 1}
+```
+
+Ordered newest first.
+
+### `DELETE /api/v1/books/{book_id}/words/{word_id}`
+
+`204 No Content`, or `404` if the word doesn't exist for that book (a word
+ID from a different book 404s too -- entries are scoped to their book).
+
+---
+
+## Character Map (relationships)
+
+**Status (2026-11-12): implemented and wired to real Cloudflare extraction**,
+with one deliberate design choice: it does **not** regenerate on every page
+view. `GET` only ever reads a cache; a separate `POST .../generate` (the
+"Update" button) does the real (costed) extraction and replaces the cache.
+Live-verified against a real uploaded book (Harry Potter, pages 1-15):
+real character nodes (Harry Potter, the Dursleys, Dumbledore, McGonagall,
+Hagrid) and real grounded relationship edges, each with a verbatim quote
+checked against the actual book text.
+
+### `GET /api/v1/books/{book_id}/relationships`
+
+Returns whatever's cached from the last `generate` call -- free, no model
+call. `not_available` if nothing has been generated yet, or if the last
+generation attempt found nothing groundable:
+
+```json
+{
+  "book_id": "40fae399-...",
+  "status": "not_available",
+  "source": "none",
+  "message": "Nothing generated yet -- tap Update to extract characters from what you've read so far.",
+  "nodes": [],
+  "edges": [],
+  "generated_at": null,
+  "boundary_label": null
+}
+```
+
+### `POST /api/v1/books/{book_id}/relationships/generate`
+
+The "Update" button. Sends everything the reader has read so far
+(`RetrievalProvider.list_chunks`, spoiler-bounded by saved progress) in one
+prompt, grounds the model's JSON against that real text (a character must
+actually be named in the excerpts; every relationship's evidence must be an
+exact quote found in them), and replaces the cache. Costs a real Cloudflare
+call -- not triggered by `GET`, and not auto-triggered on page load.
+
+```json
+{
+  "book_id": "40fae399-...",
+  "status": "ready",
+  "source": "extracted",
+  "message": null,
+  "nodes": [
+    {"id": "char_harry_potter", "name": "Harry Potter", "role": "protagonist", "description": "a young wizard Traits: brave, resilient.", "first_seen_chunk_id": "40fae399-...:0"}
+  ],
+  "edges": [
+    {"id": "rel_char_harry_potter_char_hagrid_ally", "source": "char_harry_potter", "target": "char_hagrid", "relationship": "ally", "label": "Hagrid brought him his letter", "evidence": "I've got him, sir."}
+  ],
+  "generated_at": "2026-11-12T02:14:52.454839",
+  "boundary_label": "page 15"
+}
+```
+
+`status` stays `not_available` (not an error) if: the book isn't ready yet,
+nothing has been read, the model's response couldn't be parsed as JSON, or
+every character/relationship it proposed failed grounding. `source` is
+`"extracted"` for real results; mark any future seeded demo data
+`"fixture"`.
+
+`node` shape: `{id, name, role, description, first_seen_chunk_id}`. `edge`
+shape: `{id, source, target, relationship, label, evidence}`. Relationship
+name matching is fuzzy on purpose (handles the model saying "Dumbledore"
+in `relationships` after saying "Albus Dumbledore" in `characters`), but a
+name word shared by two different characters is treated as ambiguous and
+the edge is dropped rather than guessed.
+
+Both routes: `404 NOT_FOUND` if the book doesn't exist.
+
+---
+
+## Reading log and achievements
+
+Both are computed from real data (reading progress updates, chat
+messages, uploaded books) -- nothing here is a mock or fixture.
+
+### `GET /api/v1/reading-log`
+
+Global, not per-book (matches the dashboard-level reading log in the
+original design). Every `PUT .../progress` call upserts one entry for
+today's UTC date for that book; the same book/day combo updates in place
+rather than duplicating.
+
+```json
+{
+  "days": [
+    {"date": "2026-11-12", "book_id": "40fae399-...", "book_title": "SplitPDF", "current_page": 5, "current_chapter": null}
+  ],
+  "current_streak": 1,
+  "longest_streak": 1
+}
+```
+
+`current_streak` counts consecutive calendar days up to today (or
+yesterday, if nothing has been logged yet today -- so the streak isn't
+shown as broken before the reader has had a chance to read).
+`longest_streak` is the longest run ever, across all books.
+
+### `GET /api/v1/achievements`
+
+```json
+{
+  "achievements": [
+    {"id": "first_upload", "label": "Shelved your first book", "description": "Upload a book to your library.", "unlocked": true},
+    {"id": "first_question", "label": "Curious mind", "description": "Ask the AI your first question about a book.", "unlocked": false},
+    {"id": "finished_a_book", "label": "The End", "description": "Finish reading a book.", "unlocked": false},
+    {"id": "three_day_streak", "label": "Building a habit", "description": "Read on 3 days in a row.", "unlocked": false},
+    {"id": "seven_day_streak", "label": "A week of reading", "description": "Read on 7 days in a row.", "unlocked": false},
+    {"id": "library_of_five", "label": "Growing library", "description": "Upload 5 books.", "unlocked": false}
+  ],
+  "current_streak": 0,
+  "longest_streak": 0
+}
+```
+
+`unlocked` is computed live on every request from books/progress/reading-log/
+messages -- there is no separate "unlocked achievements" table, so nothing
+can get out of sync. This is a fixed starter list, not a final design;
+discuss with the team before adding/removing achievement IDs, since the
+frontend will key off them.
+
+---
+
 ## Not implemented yet (documented, not silently dropped)
 
 These are in the original proposal but intentionally **not** built in
 this PR -- see `docs/BACKEND_CONTEXT.md` for the implemented/mocked/
 planned table:
 
-- `GET/POST /api/v1/books/{book_id}/words` (Word Wall)
-- `GET /api/v1/books/{book_id}/characters`, `GET /api/v1/books/{book_id}/relationships`
-- `GET /api/v1/books/{book_id}/activity`, `POST /api/v1/books/{book_id}/sessions`
-- `GET /api/v1/achievements`
+- `GET /api/v1/books/{book_id}/characters` (a separate per-character detail
+  view, distinct from the relationships graph above)
 - `POST /api/v1/visualizations`, `/api/v1/study/*`
+- Image/portrait generation (no hook anywhere yet, not even a `not_available`
+  route -- no AI model is connected for this)
 
 Do not build a frontend screen against any of the above until they
 actually exist in this contract.

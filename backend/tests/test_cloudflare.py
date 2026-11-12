@@ -138,6 +138,41 @@ def test_client_errors_are_not_retried():
     assert info.value.retryable is False
 
 
+def test_generate_returns_response_field_when_string():
+    client, _ = make_client(lambda r: ok({"response": "hello there"}))
+    text = asyncio.run(client.generate(MODEL, [{"role": "user", "content": "hi"}], max_tokens=10))
+    assert text == "hello there"
+
+
+def test_generate_falls_back_to_choices_content():
+    client, _ = make_client(lambda r: ok({"choices": [{"message": {"content": "from choices"}}]}))
+    text = asyncio.run(client.generate(MODEL, [{"role": "user", "content": "hi"}], max_tokens=10))
+    assert text == "from choices"
+
+
+def test_generate_handles_response_field_already_parsed_as_json():
+    """Some models (e.g. Qwen3 on a JSON-mode prompt) put the already-parsed
+    object directly in `response` instead of a string -- this must not be
+    treated as "no answer text" just because it isn't a str."""
+    client, _ = make_client(lambda r: ok({"response": {"characters": ["Alice"]}}))
+    text = asyncio.run(client.generate(MODEL, [{"role": "user", "content": "hi"}], max_tokens=10))
+    assert json.loads(text) == {"characters": ["Alice"]}
+
+
+def test_generate_prefers_choices_content_over_non_string_response():
+    client, _ = make_client(
+        lambda r: ok({"response": {"ignored": True}, "choices": [{"message": {"content": "real text"}}]})
+    )
+    text = asyncio.run(client.generate(MODEL, [{"role": "user", "content": "hi"}], max_tokens=10))
+    assert text == "real text"
+
+
+def test_generate_raises_when_nothing_usable():
+    client, _ = make_client(lambda r: ok({"response": None, "choices": []}))
+    with pytest.raises(CloudflareError, match="no answer text"):
+        asyncio.run(client.generate(MODEL, [{"role": "user", "content": "hi"}], max_tokens=10))
+
+
 def test_non_json_success_response():
     client, _ = make_client(lambda r: httpx.Response(200, text="<html>oops</html>"))
     with pytest.raises(CloudflareError, match="non-JSON"):

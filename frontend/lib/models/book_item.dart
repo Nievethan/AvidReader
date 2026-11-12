@@ -13,6 +13,7 @@ class BookItem {
   final int? totalPages;
   final double? percentComplete;
   final String processingStatus;
+  final String fileType;
   final Color spineColor;
 
   const BookItem({
@@ -25,6 +26,7 @@ class BookItem {
     required this.spineColor,
     this.percentComplete,
     this.processingStatus = 'ready',
+    this.fileType = 'pdf',
   });
 
   static const List<Color> _spinePalette = [
@@ -43,6 +45,7 @@ class BookItem {
     totalPages: b.totalPages,
     percentComplete: b.percentComplete,
     processingStatus: b.processingStatus,
+    fileType: b.fileType,
     spineColor: _spinePalette[b.id.hashCode.abs() % _spinePalette.length],
   );
 
@@ -55,6 +58,7 @@ class BookItem {
     totalPages: totalPages,
     percentComplete: percentComplete ?? this.percentComplete,
     processingStatus: processingStatus,
+    fileType: fileType,
     spineColor: spineColor,
   );
 

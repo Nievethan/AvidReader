@@ -20,6 +20,7 @@ result.response (classic models) or result.choices[0].message.content
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -135,13 +136,21 @@ class CloudflareClient:
             timeout=timeout,
             max_retries=max_retries,
         )
-        text = result.get("response")
-        if text is None:
+        response_field = result.get("response")
+        text = response_field if isinstance(response_field, str) else None
+        if not text:
             try:
-                text = result["choices"][0]["message"]["content"]
+                content = result["choices"][0]["message"]["content"]
+                text = content if isinstance(content, str) else None
             except (KeyError, IndexError, TypeError):
-                text = None
-        if not isinstance(text, str):
+                pass
+        if not text and isinstance(response_field, (dict, list)):
+            # A JSON-mode request (e.g. "return one JSON object") can make
+            # some models put the already-parsed object directly in
+            # `response` instead of a string -- serialize it back to text
+            # rather than treating "present but not a string" as "missing".
+            text = json.dumps(response_field)
+        if not isinstance(text, str) or not text.strip():
             raise CloudflareError(
                 "Chat model returned no answer text (a reasoning model may have spent max_tokens on reasoning)."
             )

@@ -97,6 +97,26 @@ def test_delete_book_removes_stored_file_from_disk(client, tmp_path):
     assert not stored_files[0].exists()
 
 
+def test_delete_book_removes_its_conversations_and_messages(client):
+    upload = client.post(
+        "/api/v1/books",
+        files={"file": ("sample.pdf", make_minimal_pdf_bytes(), "application/pdf")},
+    )
+    book_id = upload.json()["id"]
+    chat = client.post("/api/v1/ai/chat", json={"book_id": book_id, "question": "Who is the protagonist?"})
+    conversation_id = chat.json()["conversation_id"]
+
+    delete_response = client.delete(f"/api/v1/books/{book_id}")
+    assert delete_response.status_code == 204
+
+    from app.db import database
+    from app.models.ai import Conversation, Message
+
+    with database.SessionLocal() as db:
+        assert db.get(Conversation, conversation_id) is None
+        assert db.query(Message).filter_by(conversation_id=conversation_id).count() == 0
+
+
 def test_get_book_content_is_honestly_not_available(client):
     upload = client.post(
         "/api/v1/books",

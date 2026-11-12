@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -22,6 +24,7 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   bool _loading = true;
   bool _uploading = false;
   String? _error;
+  Timer? _ingestionPollTimer;
 
   BookItem? get _activeBook {
     if (_books.isEmpty) return null;
@@ -35,6 +38,12 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   void initState() {
     super.initState();
     _loadBooks();
+  }
+
+  @override
+  void dispose() {
+    _ingestionPollTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadBooks() async {
@@ -82,11 +91,32 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
       _activeBookId = uploaded.id;
       await _loadBooks();
       _showSnack('Uploaded "${uploaded.title}"');
+      _pollIngestion(uploaded.id);
     } on ApiException catch (e) {
       _showSnack('Upload failed: ${e.message}');
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  // The book list isn't re-fetched on its own once ingestion finishes in the
+  // background, so without this the Library/Reader keep showing
+  // "processing" forever even after the real status has moved on.
+  void _pollIngestion(String bookId) {
+    _ingestionPollTimer?.cancel();
+    _ingestionPollTimer = Timer(const Duration(seconds: 2), () async {
+      try {
+        final status = await api.getIngestionStatus(bookId);
+        if (!mounted) return;
+        if (status.status == 'processing') {
+          _pollIngestion(bookId);
+        } else {
+          await _loadBooks();
+        }
+      } on ApiException {
+        // Give up quietly; the user can still pull-to-refresh via onRetry.
+      }
+    });
   }
 
   void _selectBook(String id) {
@@ -97,10 +127,11 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   Future<void> _changePage(int delta) async {
     final book = _activeBook;
     if (book == null) return;
-    final newPage = (book.currentPage + delta)
-        .clamp(0, book.totalPages ?? 1 << 30)
-        .toInt();
     final total = book.totalPages;
+    // currentPage is 0-based, and /content only has pages 1..totalPages,
+    // so the last valid 0-based page is (totalPages - 1).
+    final maxPage = (total != null && total > 0) ? total - 1 : 1 << 30;
+    final newPage = (book.currentPage + delta).clamp(0, maxPage).toInt();
     final percent = (total != null && total > 0) ? newPage / total * 100 : null;
 
     // Optimistic update so the UI feels instant; reverted on failure.

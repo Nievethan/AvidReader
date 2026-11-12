@@ -68,8 +68,8 @@ class _AskAiScreenState extends State<AskAiScreen> {
       final notes = [
         if (result.isHypothetical)
           'Hypothetical: not what happens in the book.',
-        if (result.providerStatus == 'mock')
-          'Mock AI: real retrieval isn\'t connected yet.',
+        if (result.providerStatus == 'fake')
+          'Offline demo answer: no Cloudflare credentials configured.',
       ];
       setState(() {
         _conversationId = result.conversationId;

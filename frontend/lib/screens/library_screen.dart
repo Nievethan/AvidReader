@@ -219,9 +219,14 @@ class LibraryScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                const Text(
-                  'Text parsing and the knowledge graph aren\'t connected yet, so AI answers are placeholders for now.',
-                  style: TextStyle(
+                Text(
+                  switch (activeBook.processingStatus) {
+                    'failed' => 'Indexing failed. Try uploading it again.',
+                    'unsupported' =>
+                      'This file format isn\'t supported for AI features yet.',
+                    _ => 'Indexing this book for AI features — usually just a few seconds.',
+                  },
+                  style: const TextStyle(
                     fontSize: 11,
                     color: ClassicLitTheme.inkSecondary,
                   ),
