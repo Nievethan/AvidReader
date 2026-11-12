@@ -1,3 +1,128 @@
+# Changes: character-map AI extraction
+
+Owner: Abinav. Branch: `feature/character-map-ai-extraction` (built on top of
+`feature/word-wall-achievements-charactermap-backend`, which added the
+`not_available` placeholder route this replaces with real extraction).
+
+## Summary
+
+`GET /api/v1/books/{id}/relationships` previously always returned
+`not_available` -- no extraction existed. Now `POST .../relationships/generate`
+(the "Update" button) does real one-shot Cloudflare extraction over
+everything the reader has read so far, grounds the result against the real
+text, and caches it; `GET` just reads that cache for free. Not
+auto-triggered on page load -- only the explicit Update action costs a
+model call.
+
+**Live-verified against a real uploaded book** (99-page Harry Potter PDF,
+read to page 15, real Cloudflare credentials): returned 7 real character
+nodes (Harry Potter, the Dursleys, Dumbledore, McGonagall, Hagrid, each with
+a real `first_seen_chunk_id`) and 4 real grounded relationship edges, each
+with a verbatim evidence quote checked against the actual book text. The
+follow-up `GET` returned the same data in 44ms (cache hit).
+
+**Two real bugs found and fixed by actually calling the real model** (not
+visible in offline/mocked tests):
+1. `CloudflareClient.generate()` (`app/integrations/cloudflare.py`, shared by
+   everyone) treated `result["response"]` being present-but-not-a-string as
+   "no answer text" and discarded it. Some models (Qwen3, on a JSON-mode
+   prompt) put the already-parsed JSON object directly in `response` instead
+   of a string -- a perfectly good answer was being thrown away. Fixed to
+   prefer a string from either `response` or `choices[].message.content`, or
+   serialize the object if that's all there is.
+2. The model listed full names in `characters` (e.g. "Albus Dumbledore") but
+   short names in `relationships` (e.g. "Dumbledore") -- exact-match name
+   lookup silently dropped every single relationship edge, so the first live
+   test returned 7 nodes and **zero** edges. Fixed with fuzzy name-word
+   matching that still refuses to guess when a name word is ambiguous
+   between two different characters (e.g. two people both named "Potter").
+
+**A third orphan-cleanup bug, this one pre-dating this branch entirely:**
+`DELETE /books/{id}` never cleaned up that book's `conversations`/`messages`
+either (present since the original P0 chat feature, just never exercised by
+a delete-after-chatting test until this pass). Fixed the same way as the
+other two (`ai_repository.delete_for_book`), verified live (all of
+`word_wall_entries`, `reading_log_entries`, `character_graph_cache`,
+`conversations`, `messages` are actually empty in SQLite after a delete that
+touched all of them), and covered by a new test.
+
+**What this is NOT:** a finished, evaluated feature. It's a basic working
+version -- one-shot over the whole read-so-far text, no per-chapter
+incremental extraction or merging, no precision evaluation against PR2's
+"≥85% precision across 40 reviewed connections" target, and a long or
+mostly-read book could hit the model's context limit (not handled yet;
+would need truncating to recent chunks or a chaptered approach). Good enough
+to actually work and be demoed; not what PR2 describes as the final design.
+
+**Testing:** `pytest -q` → 216 passed (200 existing + 4 Cloudflare-client
+regression tests + 12 new character-map tests), fully offline -- the real
+extraction path is tested via a dependency-injected stub chat model, not
+real Cloudflare, so CI never needs credentials. Also live-verified end to
+end as described above.
+
+## New settings (`backend/.env`)
+| Variable | Default | Purpose |
+|---|---|---|
+| `CHARACTER_MAP_MAX_TOKENS` | `4000` | Output budget for one extraction call (2000 was tried first and failed live -- see bug #1 above; this wasn't actually the cause, but headroom doesn't hurt) |
+| `CHARACTER_MAP_TIMEOUT_SECONDS` | `45` | Per-call timeout (longer than chat's 20s default -- the prompt is much bigger) |
+
+---
+
+
+
+Two separate pieces of work:
+
+1. **Frontend: closed the gap between the real RAG backend (below) and the
+   Flutter app.** The Reader screen showed a hardcoded sample passage and
+   never called the real endpoints; fixed to call `GET /content` and poll
+   `GET /ingestion`. Found and fixed a page-offset bug during live browser
+   testing: `currentPage` is 0-based in this app but `/content` is 1-based,
+   so the first "next page" click looked broken (silently re-fetched the
+   same page). Also fixed a stale `providerStatus == 'mock'` check in Ask AI
+   (the backend never returns that value) and a stale "processing" banner
+   that never refreshed after ingestion actually finished.
+2. **Backend: Word Wall storage, reading log, achievements, and real wiring
+   for the character-map route** -- none of these existed before. No AI
+   involved; see `docs/API_CONTRACT.md` and `docs/TEAM_INTEGRATION.md` for
+   full shapes and ownership notes.
+
+| Feature | What it is |
+|---|---|
+| Word Wall | `POST`/`GET`/`DELETE /api/v1/books/{id}/words`. Plain CRUD: word + optional meaning/quote/source location, scoped per book. |
+| Reading log | `GET /api/v1/reading-log`. Auto-logged (one row per book per UTC day) from every `PUT .../progress` call; computes `current_streak`/`longest_streak`. |
+| Achievements | `GET /api/v1/achievements`. Six starter achievements, computed live from books/progress/reading-log/messages -- nothing persisted as "unlocked". |
+| Character map | `GET /api/v1/books/{id}/relationships` is now real and wired (previously didn't exist at all), honestly returning `status: "not_available"` until Gitae's `CharacterGraphProvider` is implemented. |
+
+**Testing:** `pytest -q` → 200 passed (187 existing + 13 new), fully offline,
+no regressions. Also live-verified over real HTTP against the running
+server (add/list/delete a word, a real progress update producing a
+streak of 1, achievements flipping to `true` after a real upload and a
+real chat message, the full `question`/`explain`/`what_if`/`story_continues`
+matrix, cross-book conversation-mismatch 404, out-of-range/invalid-page
+422/404s) -- not just unit tests.
+
+**Bug found and fixed during a second, more adversarial test pass:**
+`DELETE /api/v1/books/{id}` left that book's Word Wall entries and
+reading-log rows behind as orphans (no cascade was wired up). Fixed in
+`BookService.delete_book` via `engagement_repository.delete_for_book()`;
+verified live (rows actually gone from SQLite after delete, not just a
+204 response) and covered by a new regression test.
+
+**Known limitations / honest gaps:**
+- None of this is wired into the Flutter frontend yet (explicitly out of
+  scope for this branch -- see `docs/TEAM_INTEGRATION.md`'s Nievethan
+  section).
+- Achievement IDs/thresholds are a reasonable starting design, not a
+  reviewed final spec -- there was no detailed requirement beyond the name
+  "achievements" anywhere in the project docs.
+- Word Wall has no AI-generated meanings; the `meaning` field is just
+  stored text, supplied by whoever calls the endpoint.
+- EPUB path for reading log/achievements uses `current_chapter` the same
+  way existing code does, but wasn't separately tested with a real EPUB
+  (no sample file available locally).
+
+---
+
 # Changes: RAG pipeline, Steps 1-9
 
 Owner: Umer. Roadmap reference: "RAG Pipeline Implementation Guide", section 8.

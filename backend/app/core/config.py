@@ -100,6 +100,11 @@ class Settings:
     story_context_chunks: int = 3
     history_max_messages: int = 6
 
+    # Character map ("Update" button): one-shot extraction over everything
+    # read so far, cached until the reader asks to regenerate it.
+    character_map_max_tokens: int = 4000
+    character_map_timeout_seconds: float = 45.0
+
     @property
     def is_local(self) -> bool:
         return self.app_env == "local"
@@ -144,4 +149,6 @@ def get_settings() -> Settings:
         story_max_tokens=int(os.environ.get("STORY_MAX_TOKENS", "450")),
         story_context_chunks=int(os.environ.get("STORY_CONTEXT_CHUNKS", "3")),
         history_max_messages=int(os.environ.get("HISTORY_MAX_MESSAGES", "6")),
+        character_map_max_tokens=int(os.environ.get("CHARACTER_MAP_MAX_TOKENS", "4000")),
+        character_map_timeout_seconds=float(os.environ.get("CHARACTER_MAP_TIMEOUT_SECONDS", "45")),
     )

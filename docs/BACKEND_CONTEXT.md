@@ -21,6 +21,8 @@ table row/section in the same commit or PR**, not as a follow-up:
 |---|---|---|
 | 2026-10-30 | Abinav (backend foundation PR, via Claude) | Initial P0 foundation: health/ready, book upload/catalog, progress, mock AI chat + conversations, typed integration Protocols, tests, Docker/Compose fixes. |
 | 2026-11-11 | Umer (RAG Steps 1-9, via Claude) | Real ingestion (background, status route, restart recovery), reader text, Qdrant (server or embedded), retrieval with spoiler boundary, grounded answers on Cloudflare Workers AI with citation checks, `eval_rag.py` evaluation. Mocks replaced for ingestion and chat. |
+| 2026-11-12 | Abinav (frontend hookup + engagement features backend, via Claude) | Frontend: Reader now calls real `/content` and `/ingestion` instead of a sample passage (fixed a page-offset bug found during live testing); Ask AI status handling fixed. Backend: Word Wall storage, reading log (auto-logged from progress updates), achievements (computed live, no AI). All live-verified against the running server, not just unit tests. |
+| 2026-11-12 | Abinav (character-map AI extraction, via Claude) | `POST /books/{id}/relationships/generate` now does real one-shot Cloudflare extraction over everything read so far (cached; `GET` is free and only reads the cache). Live-verified against a real book: real character nodes and grounded relationship edges. Found and fixed two real bugs in the process: `CloudflareClient.generate()` discarded valid JSON-mode responses when `result.response` was a parsed object instead of a string (affects any JSON-mode caller, not just this feature); relationship edges were being silently dropped because the model used short names in `relationships` after full names in `characters` (fixed with fuzzy, ambiguity-safe name matching). |
 
 ## Implemented and tested (real, working code)
 
@@ -38,12 +40,26 @@ table row/section in the same commit or PR**, not as a follow-up:
 | Persistence | SQLite via SQLAlchemy; `books` gained `chunk_count` and `ingestion_attempts` (added to existing databases at startup by `add_missing_columns`) | `app/db/database.py`, `app/models/` |
 | Tests | Offline suite (fake embeddings, offline answer model, in-memory Qdrant) plus `scripts/eval_rag.py` for live end-to-end evaluation; see `backend/README.md` | `backend/tests/`, `backend/scripts/` |
 | Integration contracts | `Protocol`s for Umer (`IngestionProvider`, `RetrievalProvider`) and Gitae (`AnswerProvider`, `CharacterGraphProvider`), with mock implementations wired in | `app/integrations/interfaces.py` |
+| Word Wall | CRUD storage (add/list/delete a word + optional meaning/quote/source), scoped per book. No AI -- the meaning text is supplied by the caller | `app/api/v1/words.py`, `app/services/word_wall_service.py`, `app/models/engagement.py` |
+| Reading log | `GET /api/v1/reading-log`, auto-logged (one row per book per UTC day) whenever progress updates; powers `current_streak`/`longest_streak` | `app/api/v1/reading_log.py`, `app/services/reading_log_service.py` |
+| Achievements | `GET /api/v1/achievements`, 6 starter achievements computed live from books/progress/reading-log/messages -- no separate "unlocked" table | `app/api/v1/achievements.py`, `app/services/achievements_service.py` |
+| Character map extraction | `GET` reads a cache (free); `POST .../relationships/generate` does real Cloudflare extraction over everything read so far, grounds it against the real text, caches the result. Live-verified: real nodes + edges from a real book. Basic version -- one-shot over the whole read-so-far text, no per-chapter incremental extraction, no precision evaluation against PR2's 85% target, long/mostly-read books could hit the model's context limit (not handled yet) | `app/api/v1/character_map.py`, `app/integrations/character_graph.py`, `app/services/character_map_service.py` |
 
-**Verification performed this session:**
+**Verification performed this session (2026-10-30):**
 - `pytest -v` → 28 passed (includes edge cases: oversized upload → 413, wrong-content-despite-correct-extension → 415, corrupt/non-EPUB zip, path-traversal filename sanitization, cross-book conversation mismatch → 404, file actually removed from disk on delete).
 - Live server started with `uvicorn app.main:app`; hit `/health`, `/ready`, `/docs` over real HTTP.
 - Full flow over real HTTP (curl): upload PDF → list → update progress → AI chat → fetch conversation. All returned expected data.
 - Restarted the server and re-listed books: data persisted correctly.
+
+**Verification performed 2026-11-12 (Word Wall / reading log / achievements / character-map wiring):**
+- `pytest -q` → 199 passed (186 existing + 13 new for these features), all offline, no regressions.
+- Live server over real HTTP: added/listed/deleted a Word Wall entry; confirmed deleting via the wrong book 404s; `PUT .../progress` confirmed to auto-create a reading-log entry for today with `current_streak: 1`; `/achievements` confirmed `first_upload`/`first_question` flip to `true` after a real upload and a real chat message; `/relationships` confirmed returns `status: "not_available"` honestly, not a 404 or fake data.
+- A second, more adversarial pass found and fixed a real bug: `DELETE /books/{id}` left Word Wall and reading-log rows orphaned (no cascade); fixed and verified the rows are actually gone from SQLite after delete, not just a 204 response.
+
+**Verification performed 2026-11-12 (character-map AI extraction):**
+- `pytest -q` → 216 passed, all offline (the real-extraction path is tested via a dependency-injected stub model, not real Cloudflare, so CI doesn't need credentials).
+- Live server over real HTTP against a real uploaded book (99-page Harry Potter PDF, read to page 15), real Cloudflare credentials: `POST .../relationships/generate` returned 7 real character nodes and 4 real grounded relationship edges (each with a verbatim quote checked against the actual book text); the follow-up `GET` returned the same data in 44ms (cache hit, no new model call).
+- Two real bugs found by this live call (not visible in offline tests) and fixed, see change log above.
 
 ## Explicitly mocked (labeled as such in the API, not hidden)
 
@@ -52,10 +68,10 @@ table row/section in the same commit or PR**, not as a follow-up:
 
 ## Not implemented at all yet (planned, not built)
 
-- Word Wall (`/books/{id}/words`)
-- Character/relationship graph (`/books/{id}/characters`, `/relationships`)
-- Reading sessions / activity log / achievements
-- Visualization / image generation endpoints
+- `/books/{id}/characters` (a separate per-character detail view, distinct from the relationships graph)
+- Incremental/per-chapter character extraction, and precision evaluation against PR2's 85% target (today's extraction is a single one-shot call over everything read so far -- see above)
+- AI-generated Word Wall meanings (the storage endpoint exists; nothing calls an LLM to generate a definition automatically)
+- Visualization / image generation endpoints (no hook anywhere, not even `not_available`)
 - Study mode (quizzes/flashcards)
 - Alembic migrations (using `create_all()` instead -- fine for now, documented limitation)
 - Authentication / multi-user model
@@ -64,7 +80,7 @@ table row/section in the same commit or PR**, not as a follow-up:
 
 - **Docker Compose**: Qdrant now always starts and the backend uses `QDRANT_URL=http://qdrant:6333` (`docker compose config` validated on 2026-11-11; the Qdrant container was run and used for vector-store testing). A full `docker compose up --build` of the new backend image with ingestion end to end has not been run yet.
 - No CI workflow exists in the repo yet (Arno's area).
-- Frontend: connected for upload/library/chat (`frontend/lib/api_client.dart`). It does not yet call `GET /books/{id}/content` (the reader still shows a sample passage) or `GET /books/{id}/ingestion`.
+- Frontend: connected for upload/library/chat/content/ingestion (`frontend/lib/api_client.dart`) as of 2026-11-12 -- the reader shows real page/chapter text and polls ingestion status instead of a sample passage. Still not wired: the new Word Wall, reading-log, achievements and relationships endpoints above (real on the backend, not called from Flutter yet), and the Visualize/Progress screens are still mostly hardcoded mockups unrelated to the uploaded book.
 
 ## Quick facts for anyone resuming this work
 
