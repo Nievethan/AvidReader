@@ -66,10 +66,12 @@ class _AskAiScreenState extends State<AskAiScreen> {
         currentChapter: widget.book.currentChapter,
       );
       final notes = [
+        if (result.spoilerReason != null && result.spoilerReason!.isNotEmpty)
+          'Spoiler Guard: ${result.spoilerReason}',
         if (result.isHypothetical)
           'Hypothetical: not what happens in the book.',
         if (result.providerStatus == 'fake')
-          'Offline demo answer: no Cloudflare credentials configured.',
+          'Cloudflare proxy unavailable. The app needs your Cloudflare API keys to call the AI provider.',
       ];
       setState(() {
         _conversationId = result.conversationId;
@@ -202,8 +204,27 @@ class _AskAiScreenState extends State<AskAiScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildQuickPromptChip('What if…', 'What if '),
+                    const SizedBox(width: 6),
+                    _buildQuickPromptChip(
+                      'What happens next?',
+                      'What happens next?',
+                    ),
+                    const SizedBox(width: 6),
+                    _buildQuickPromptChip(
+                      'Explain themes',
+                      'Explain the key themes in this part of the book.',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
               const Text(
-                'Answers are limited to your uploaded book.',
+                'Answers are spoiler-protected up to your reading position.',
                 style: TextStyle(
                   fontSize: 11,
                   color: ClassicLitTheme.inkSecondary,
@@ -346,6 +367,36 @@ class _AskAiScreenState extends State<AskAiScreen> {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickPromptChip(String label, String prompt) {
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _promptController.text = prompt;
+          _promptController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _promptController.text.length),
+          );
+        });
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: ClassicLitTheme.elevatedPaper,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: ClassicLitTheme.deckleBorder),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: ClassicLitTheme.oxbloodPrimary,
+          ),
         ),
       ),
     );

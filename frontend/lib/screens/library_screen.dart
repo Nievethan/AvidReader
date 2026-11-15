@@ -15,6 +15,7 @@ class LibraryScreen extends StatelessWidget {
   final VoidCallback onUploadTap;
   final ValueChanged<String> onBookTap;
   final VoidCallback onResumeTap;
+  final ValueChanged<String>? onDeleteTap;
 
   const LibraryScreen({
     super.key,
@@ -27,6 +28,7 @@ class LibraryScreen extends StatelessWidget {
     required this.onUploadTap,
     required this.onBookTap,
     required this.onResumeTap,
+    this.onDeleteTap,
   });
 
   Widget _buildBody(BuildContext context) {
@@ -172,27 +174,41 @@ class LibraryScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 36,
-                      child: ElevatedButton(
-                        onPressed: onResumeTap,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: ClassicLitTheme.oxbloodPrimary,
-                          foregroundColor: ClassicLitTheme.inkOnPrimary,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 36,
+                            child: ElevatedButton(
+                              onPressed: onResumeTap,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: ClassicLitTheme.oxbloodPrimary,
+                                foregroundColor: ClassicLitTheme.inkOnPrimary,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                              child: const Text(
+                                'Resume',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                        child: const Text(
-                          'Resume',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
+                        if (onDeleteTap != null) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 20),
+                            tooltip: 'Remove book',
+                            color: ClassicLitTheme.inkSecondary,
+                            onPressed: () => _confirmDelete(context, activeBook),
                           ),
-                        ),
-                      ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -282,6 +298,43 @@ class LibraryScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  void _confirmDelete(BuildContext context, BookItem book) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ClassicLitTheme.parchmentBg,
+        title: const Text(
+          'Remove Book?',
+          style: TextStyle(
+            fontFamily: ClassicLitTheme.serifFont,
+            fontWeight: FontWeight.w700,
+            color: ClassicLitTheme.oxbloodPrimary,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to remove "${book.title}" from your library? This will delete all indexed vectors, progress, and Word Wall entries.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onDeleteTap?.call(book.id);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: ClassicLitTheme.oxbloodPrimary,
+              foregroundColor: ClassicLitTheme.inkOnPrimary,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
   }
 }

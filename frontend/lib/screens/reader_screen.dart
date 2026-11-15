@@ -163,6 +163,107 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  void _showAddWordDialog({String? defaultWord, String? defaultMeaning}) {
+    final wordController = TextEditingController(text: defaultWord);
+    final meaningController = TextEditingController(text: defaultMeaning);
+    final quoteController = TextEditingController();
+    final loc = widget.book.fileType.toLowerCase() == 'epub'
+        ? 'chapter ${widget.book.currentChapter}'
+        : 'page ${widget.book.currentPage + 1}';
+    final locController = TextEditingController(text: loc);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ClassicLitTheme.parchmentBg,
+        title: const Text(
+          'Add to Word Wall',
+          style: TextStyle(
+            fontFamily: ClassicLitTheme.serifFont,
+            fontWeight: FontWeight.w700,
+            color: ClassicLitTheme.oxbloodPrimary,
+          ),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: wordController,
+                autofocus: defaultWord == null || defaultWord.isEmpty,
+                decoration: const InputDecoration(
+                  labelText: 'Word / Phrase *',
+                  hintText: 'e.g. lugubrious',
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: meaningController,
+                decoration: const InputDecoration(
+                  labelText: 'Meaning / Definition',
+                  hintText: 'e.g. mournful, dismal',
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: quoteController,
+                decoration: const InputDecoration(
+                  labelText: 'Quote from page',
+                  hintText: 'e.g. with a lugubrious sigh',
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: locController,
+                decoration: const InputDecoration(
+                  labelText: 'Source Location',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final w = wordController.text.trim();
+              if (w.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                await api.addWord(
+                  widget.book.id,
+                  word: w,
+                  meaning: meaningController.text.trim(),
+                  quote: quoteController.text.trim(),
+                  sourceLocation: locController.text.trim(),
+                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Saved "$w" to Word Wall')),
+                  );
+                }
+              } on ApiException catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Could not save word: ${e.message}')),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: ClassicLitTheme.oxbloodPrimary,
+              foregroundColor: ClassicLitTheme.inkOnPrimary,
+            ),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _cycleFontSize() {
     setState(() {
       if (_fontSize == 16.0) {
@@ -267,16 +368,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ),
                   const SizedBox(width: 6),
                   _buildSelectionActionButton(
-                    label: 'Note',
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Notes aren\'t connected to the backend yet',
-                          ),
-                        ),
-                      );
-                    },
+                    label: 'Word Wall',
+                    onTap: () => _showAddWordDialog(),
                   ),
                 ],
               ),
@@ -285,19 +378,43 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 const SizedBox(height: 12),
                 PaperCard(
                   backgroundColor: ClassicLitTheme.elevatedPaper,
-                  child: Row(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.auto_stories,
-                        size: 16,
-                        color: ClassicLitTheme.oxbloodPrimary,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.auto_stories,
+                            size: 16,
+                            color: ClassicLitTheme.oxbloodPrimary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _activeExplanation!,
+                              style:
+                                  const TextStyle(fontSize: 12.5, height: 1.45),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _activeExplanation!,
-                          style: const TextStyle(fontSize: 12.5, height: 1.45),
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () => _showAddWordDialog(
+                            defaultMeaning: _activeExplanation,
+                          ),
+                          icon: const Icon(Icons.bookmark_add_outlined,
+                              size: 14),
+                          label: const Text(
+                            'Save to Word Wall',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
                     ],

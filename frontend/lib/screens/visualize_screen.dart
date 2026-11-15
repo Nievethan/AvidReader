@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../api_client.dart';
+import '../main.dart';
 import '../models/book_item.dart';
-import '../models/character_visual.dart';
 import '../theme/classic_lit_theme.dart';
 import '../widgets/filter_pill_row.dart';
 import '../widgets/paper_card.dart';
@@ -20,41 +21,104 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
   int _selectedCategoryIndex = 0;
   int _selectedCharacterIndex = 0;
 
-  final List<CharacterVisual> _characters = const [
-    CharacterVisual(
-      name: 'Rodion Raskolnikov',
-      role: 'Former Law Student',
-      description: 'Slender, finely featured young man dressed in threadbare overcoat, feverish gaze reflecting intense philosophical turmoil.',
-      citations: ['p. 84', 'p. 91'],
-      icon: Icons.person_outline,
-    ),
-    CharacterVisual(
-      name: 'Sofya Semyonovna (Sonya)',
-      role: 'Quiet Confidante',
-      description: 'Pale, gentle countenance with clear blue eyes characterized by unwavering compassion and quiet moral resilience.',
-      citations: ['p. 98', 'p. 104'],
-      icon: Icons.favorite_border,
-    ),
-    CharacterVisual(
-      name: 'Porfiry Petrovich',
-      role: 'Examining Magistrate',
-      description: 'Stout, clean-shaven official with a shrewd, deceptively genial twinkle in his eye during psychological questioning.',
-      citations: ['p. 108', 'p. 111'],
-      icon: Icons.balance_outlined,
-    ),
-    CharacterVisual(
-      name: 'Dmitri Razumikhin',
-      role: 'Loyal University Friend',
-      description: 'Tall, expressive, energetic companion whose warmth contrasts sharply with Raskolnikov’s brooding isolation.',
-      citations: ['p. 88', 'p. 95'],
-      icon: Icons.handshake_outlined,
-    ),
-  ];
+  bool _loading = true;
+  bool _generating = false;
+  String? _error;
+  RelationshipsResult? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRelationships();
+  }
+
+  @override
+  void didUpdateWidget(covariant VisualizeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.book.id != widget.book.id) {
+      _selectedCharacterIndex = 0;
+      _loadRelationships();
+    }
+  }
+
+  Future<void> _loadRelationships() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await api.getRelationships(widget.book.id);
+      if (!mounted) return;
+      setState(() {
+        _result = res;
+        _loading = false;
+        if (_selectedCharacterIndex >= res.nodes.length) {
+          _selectedCharacterIndex = 0;
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _generateRelationships() async {
+    setState(() {
+      _generating = true;
+      _error = null;
+    });
+    try {
+      final res = await api.generateRelationships(widget.book.id);
+      if (!mounted) return;
+      setState(() {
+        _result = res;
+        _generating = false;
+        if (_selectedCharacterIndex >= res.nodes.length) {
+          _selectedCharacterIndex = 0;
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            res.isReady && res.nodes.isNotEmpty
+                ? 'Extracted ${res.nodes.length} characters & ${res.edges.length} relationships!'
+                : (res.message ?? 'Extraction complete.'),
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _generating = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Extraction failed: ${e.message}')),
+      );
+    }
+  }
+
+  IconData _iconForRole(String? role) {
+    final r = (role ?? '').toLowerCase();
+    if (r.contains('protagonist') || r.contains('hero')) {
+      return Icons.star_border;
+    }
+    if (r.contains('antagonist') || r.contains('villain') || r.contains('rival')) {
+      return Icons.shield_outlined;
+    }
+    if (r.contains('mentor') || r.contains('magistrate') || r.contains('teacher')) {
+      return Icons.balance_outlined;
+    }
+    if (r.contains('friend') || r.contains('ally') || r.contains('confidante')) {
+      return Icons.handshake_outlined;
+    }
+    return Icons.person_outline;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final currentCharacter = _characters[_selectedCharacterIndex];
-
     return Column(
       children: [
         // Top Header
@@ -72,261 +136,615 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
                 'Visualize',
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
-              Text(
-                'Ch. ${widget.book.currentChapter}',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: ClassicLitTheme.inkSecondary,
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Ch. ${widget.book.currentChapter}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: ClassicLitTheme.inkSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  InkWell(
+                    onTap: _generating ? null : _generateRelationships,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: ClassicLitTheme.elevatedPaper,
+                        border: Border.all(
+                          color: ClassicLitTheme.oxbloodPrimary,
+                          width: 1.1,
+                        ),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_generating)
+                            const SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.8,
+                                color: ClassicLitTheme.oxbloodPrimary,
+                              ),
+                            )
+                          else
+                            const Icon(
+                              Icons.refresh,
+                              size: 14,
+                              color: ClassicLitTheme.oxbloodPrimary,
+                            ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _generating ? 'Extracting…' : 'Update',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: ClassicLitTheme.oxbloodPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
 
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
+          child: _buildContent(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent() {
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(color: ClassicLitTheme.oxbloodPrimary),
+      );
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              FilterPillRow(
-                options: const ['Characters', 'Settings', 'Concept map'],
-                selectedIndex: _selectedCategoryIndex,
-                onSelected: (index) =>
-                    setState(() => _selectedCategoryIndex = index),
+              const Icon(
+                Icons.error_outline,
+                size: 36,
+                color: ClassicLitTheme.oxbloodPrimary,
               ),
-              const SizedBox(height: 14),
-
-              // Main Etching / Generated Image Canvas
-              Container(
-                height: 210,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: ClassicLitTheme.linenCard,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: ClassicLitTheme.inkPrimary,
-                    width: 1.2,
-                  ),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      currentCharacter.icon,
-                      size: 54,
-                      color: ClassicLitTheme.oxbloodPrimary.withValues(
-                        alpha: 0.75,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Generated image • ${currentCharacter.name}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: ClassicLitTheme.inkSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      '(19th-Century Woodcut / Etching Style)',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: ClassicLitTheme.inkSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              const SizedBox(height: 10),
+              Text(_error!, textAlign: TextAlign.center),
               const SizedBox(height: 12),
-
-              // Character Details Card
-              PaperCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      currentCharacter.name,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      currentCharacter.description,
-                      style: const TextStyle(fontSize: 12.5, height: 1.45),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Based on ${currentCharacter.citations.join(', ')}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: ClassicLitTheme.libraryGreen,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // Background Scene Generation Queue Card
-              const PaperCard(
-                backgroundColor: ClassicLitTheme.elevatedPaper,
-                padding: EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Generating scene... about 8 s. Keep reading meanwhile.',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: ClassicLitTheme.inkSecondary,
-                      ),
-                    ),
-                    SizedBox(height: 6),
-                    VintageProgressBar(
-                      value: 0.68,
-                      fillColor: ClassicLitTheme.libraryGreen,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // Regenerate & Save Buttons
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Regenerating portrait for ${currentCharacter.name}...',
-                            ),
-                          ),
-                        );
-                      },
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: ClassicLitTheme.inkPrimary,
-                        side: const BorderSide(
-                          color: ClassicLitTheme.inkPrimary,
-                          width: 1.2,
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                      child: const Text(
-                        'Regenerate',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Saved ${currentCharacter.name} to Bookplate Gallery',
-                            ),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: ClassicLitTheme.oxbloodPrimary,
-                        foregroundColor: ClassicLitTheme.inkOnPrimary,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                      child: const Text(
-                        'Save',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-              Text(
-                'CHARACTERS IN THIS CHAPTER',
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
-              const SizedBox(height: 8),
-
-              // 4-Item Character Thumbnail Strip
-              Row(
-                children: List.generate(_characters.length, (index) {
-                  final char = _characters[index];
-                  final isSelected = index == _selectedCharacterIndex;
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 3),
-                      child: GestureDetector(
-                        onTap: () =>
-                            setState(() => _selectedCharacterIndex = index),
-                        child: Container(
-                          height: 68,
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? ClassicLitTheme.goldHighlightWash
-                                : ClassicLitTheme.elevatedPaper,
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                              color: isSelected
-                                  ? ClassicLitTheme.oxbloodPrimary
-                                  : ClassicLitTheme.deckleBorder,
-                              width: isSelected ? 1.6 : 1.1,
-                            ),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                char.icon,
-                                size: 20,
-                                color: isSelected
-                                    ? ClassicLitTheme.oxbloodPrimary
-                                    : ClassicLitTheme.inkSecondary,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                char.name.split(' ').first,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: isSelected
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                  color: ClassicLitTheme.inkPrimary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
+              OutlinedButton(
+                onPressed: _loadRelationships,
+                child: const Text('Retry'),
               ),
             ],
           ),
         ),
+      );
+    }
+
+    final result = _result;
+    final nodes = result?.nodes ?? [];
+    final edges = result?.edges ?? [];
+
+    if (nodes.isEmpty) {
+      return _buildEmptyState(result?.message);
+    }
+
+    final currentIndex = _selectedCharacterIndex.clamp(0, nodes.length - 1);
+    final currentCharacter = nodes[currentIndex];
+    final characterEdges = edges.where((e) =>
+        e.source == currentCharacter.id || e.target == currentCharacter.id).toList();
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        FilterPillRow(
+          options: const ['Characters', 'Relationships', 'Concept map'],
+          selectedIndex: _selectedCategoryIndex,
+          onSelected: (index) =>
+              setState(() => _selectedCategoryIndex = index),
+        ),
+        const SizedBox(height: 14),
+
+        if (_generating) ...[
+          const PaperCard(
+            backgroundColor: ClassicLitTheme.elevatedPaper,
+            padding: EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Extracting grounded characters up to your current reading position…',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: ClassicLitTheme.inkSecondary,
+                  ),
+                ),
+                SizedBox(height: 6),
+                VintageProgressBar(
+                  value: 0.65,
+                  fillColor: ClassicLitTheme.libraryGreen,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        if (_selectedCategoryIndex == 1)
+          // Relationships list view
+          _buildAllRelationshipsView(nodes, edges)
+        else
+          // Characters view
+          _buildCharacterProfileView(currentCharacter, characterEdges, nodes, result?.boundaryLabel),
+
+        const SizedBox(height: 16),
+        Text(
+          'CHARACTERS IN THIS CHAPTER',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+        const SizedBox(height: 8),
+
+        // Character Thumbnail Strip
+        SizedBox(
+          height: 72,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: nodes.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final char = nodes[index];
+              final isSelected = index == currentIndex;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedCharacterIndex = index),
+                child: Container(
+                  width: 90,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? ClassicLitTheme.goldHighlightWash
+                        : ClassicLitTheme.elevatedPaper,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: isSelected
+                          ? ClassicLitTheme.oxbloodPrimary
+                          : ClassicLitTheme.deckleBorder,
+                      width: isSelected ? 1.6 : 1.1,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _iconForRole(char.role),
+                        size: 20,
+                        color: isSelected
+                            ? ClassicLitTheme.oxbloodPrimary
+                            : ClassicLitTheme.inkSecondary,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        char.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: isSelected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          color: ClassicLitTheme.inkPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildEmptyState(String? message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.account_tree_outlined,
+              size: 48,
+              color: ClassicLitTheme.oxbloodPrimary,
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Character Map',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message ??
+                  'No characters extracted yet. Tap Update to analyze what you\'ve read so far and extract characters without spoilers.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                color: ClassicLitTheme.inkSecondary,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _generating ? null : _generateRelationships,
+              icon: _generating
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: ClassicLitTheme.inkOnPrimary,
+                      ),
+                    )
+                  : const Icon(Icons.auto_awesome, size: 16),
+              label: Text(
+                _generating ? 'Extracting…' : 'Extract Character Map',
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: ClassicLitTheme.oxbloodPrimary,
+                foregroundColor: ClassicLitTheme.inkOnPrimary,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCharacterProfileView(
+    CharacterNode currentCharacter,
+    List<CharacterEdge> characterEdges,
+    List<CharacterNode> allNodes,
+    String? boundaryLabel,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Main Etching / Character Focus Canvas
+        Container(
+          height: 180,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: ClassicLitTheme.linenCard,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: ClassicLitTheme.inkPrimary,
+              width: 1.2,
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                _iconForRole(currentCharacter.role),
+                size: 52,
+                color: ClassicLitTheme.oxbloodPrimary.withValues(
+                  alpha: 0.85,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                currentCharacter.name,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: ClassicLitTheme.inkPrimary,
+                ),
+              ),
+              if (currentCharacter.role != null &&
+                  currentCharacter.role!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: ClassicLitTheme.goldHighlightWash,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: ClassicLitTheme.deckleBorder),
+                  ),
+                  child: Text(
+                    currentCharacter.role!.toUpperCase(),
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: ClassicLitTheme.oxbloodPrimary,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                ),
+              ],
+              if (boundaryLabel != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Extracted through $boundaryLabel',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: ClassicLitTheme.inkSecondary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Character Details Card
+        PaperCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'About ${currentCharacter.name}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                currentCharacter.description ?? 'No detailed description available.',
+                style: const TextStyle(fontSize: 13, height: 1.45),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Connections Card
+        PaperCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Relationships (${characterEdges.length})',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              if (characterEdges.isEmpty)
+                const Text(
+                  'No direct relationships recorded yet for this character.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: ClassicLitTheme.inkSecondary,
+                  ),
+                )
+              else
+                ...characterEdges.map((edge) {
+                  final isSource = edge.source == currentCharacter.id;
+                  final otherId = isSource ? edge.target : edge.source;
+                  final otherNode = allNodes.firstWhere(
+                    (n) => n.id == otherId,
+                    orElse: () => CharacterNode(id: otherId, name: otherId),
+                  );
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: ClassicLitTheme.elevatedPaper,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: ClassicLitTheme.deckleBorder),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                isSource
+                                    ? Icons.arrow_forward
+                                    : Icons.arrow_back,
+                                size: 14,
+                                color: ClassicLitTheme.oxbloodPrimary,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  '${edge.relationship ?? "connected to"} ${otherNode.name}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12.5,
+                                    color: ClassicLitTheme.inkPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (edge.label != null && edge.label!.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              edge.label!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: ClassicLitTheme.inkSecondary,
+                              ),
+                            ),
+                          ],
+                          if (edge.evidence != null &&
+                              edge.evidence!.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  left: BorderSide(
+                                    color: ClassicLitTheme.libraryGreen,
+                                    width: 2.5,
+                                  ),
+                                ),
+                              ),
+                              child: Text(
+                                '"${edge.evidence}"',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontStyle: FontStyle.italic,
+                                  color: ClassicLitTheme.libraryGreen,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAllRelationshipsView(
+    List<CharacterNode> nodes,
+    List<CharacterEdge> edges,
+  ) {
+    if (edges.isEmpty) {
+      return const PaperCard(
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'No relationships recorded yet. Tap Update above to extract relationships from the text.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontStyle: FontStyle.italic,
+                color: ClassicLitTheme.inkSecondary,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final nodeMap = {for (var n in nodes) n.id: n};
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: edges.map((edge) {
+        final sourceNode = nodeMap[edge.source] ??
+            CharacterNode(id: edge.source, name: edge.source);
+        final targetNode = nodeMap[edge.target] ??
+            CharacterNode(id: edge.target, name: edge.target);
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: PaperCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        '${sourceNode.name} ➔ ${targetNode.name}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13.5,
+                          color: ClassicLitTheme.oxbloodPrimary,
+                        ),
+                      ),
+                    ),
+                    if (edge.relationship != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: ClassicLitTheme.elevatedPaper,
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: ClassicLitTheme.deckleBorder),
+                        ),
+                        child: Text(
+                          edge.relationship!,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: ClassicLitTheme.inkSecondary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                if (edge.label != null && edge.label!.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    edge.label!,
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                ],
+                if (edge.evidence != null && edge.evidence!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: ClassicLitTheme.elevatedPaper,
+                      borderRadius: BorderRadius.circular(4),
+                      border: const Border(
+                        left: BorderSide(
+                          color: ClassicLitTheme.libraryGreen,
+                          width: 3,
+                        ),
+                      ),
+                    ),
+                    child: Text(
+                      'Evidence: "${edge.evidence}"',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        color: ClassicLitTheme.libraryGreen,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }

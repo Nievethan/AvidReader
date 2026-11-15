@@ -1,13 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 
-import '../main.dart';
-
-import '../models/book_item.dart';
-import '../theme/classic_lit_theme.dart';
 import '../api_client.dart';
+import '../main.dart';
+import '../models/book_item.dart';
+import '../services/file_selector_service.dart';
+import '../theme/classic_lit_theme.dart';
 
 class ReadingDashboardShell extends StatefulWidget {
   const ReadingDashboardShell({super.key});
@@ -70,18 +69,11 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  Future<void> _uploadBook() async {
-    final file = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'epub'],
-    );
-    if (file == null) return; // user cancelled
-
+  Future<void> _processSelectedFile(SelectedFile file) async {
     setState(() => _uploading = true);
     try {
-      final bytes = await file.readAsBytes();
       final uploaded = await api.uploadBook(
-        bytes: bytes,
+        bytes: file.bytes,
         filename: file.name,
         title: file.name.replaceAll(
           RegExp(r'\.(pdf|epub)$', caseSensitive: false),
@@ -97,6 +89,80 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  Future<void> _uploadBook() async {
+    try {
+      final file = await pickBookFile();
+      if (file == null) return; // user cancelled
+      await _processSelectedFile(file);
+    } catch (e) {
+      _showManualPathDialog(initialError: e.toString());
+    }
+  }
+
+  void _showManualPathDialog({String? initialError}) {
+    final controller = TextEditingController(
+      text: '/home/nievethan/AvidReader/SplitPDF.pdf',
+    );
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ClassicLitTheme.parchmentBg,
+        title: const Text(
+          'Select Book File',
+          style: TextStyle(
+            fontFamily: ClassicLitTheme.serifFont,
+            fontWeight: FontWeight.w700,
+            color: ClassicLitTheme.oxbloodPrimary,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Enter the absolute path to your PDF or EPUB file on disk:',
+              style: TextStyle(fontSize: 12.5),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'File Path',
+                hintText: '/path/to/book.pdf',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final path = controller.text.trim();
+              if (path.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                final file = await loadFileFromPath(path);
+                if (file != null) {
+                  await _processSelectedFile(file);
+                }
+              } catch (err) {
+                _showSnack('Could not load file: $err');
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: ClassicLitTheme.oxbloodPrimary,
+              foregroundColor: ClassicLitTheme.inkOnPrimary,
+            ),
+            child: const Text('Upload'),
+          ),
+        ],
+      ),
+    );
   }
 
   // The book list isn't re-fetched on its own once ingestion finishes in the
@@ -122,6 +188,19 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   void _selectBook(String id) {
     setState(() => _activeBookId = id);
     _navigateToTab(1);
+  }
+
+  Future<void> _deleteBook(String bookId) async {
+    try {
+      await api.deleteBook(bookId);
+      if (_activeBookId == bookId) {
+        _activeBookId = null;
+      }
+      await _loadBooks();
+      _showSnack('Book removed from library');
+    } on ApiException catch (e) {
+      _showSnack('Could not remove book: ${e.message}');
+    }
   }
 
   Future<void> _changePage(int delta) async {
@@ -207,6 +286,7 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
         onUploadTap: _uploadBook,
         onBookTap: _selectBook,
         onResumeTap: () => _navigateToTab(1),
+        onDeleteTap: _deleteBook,
       ),
       _needsBook(
         (book) => ReaderScreen(
