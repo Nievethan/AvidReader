@@ -1,3 +1,43 @@
+# Changes: Frontend Full-Stack Integration (Character Map, Word Wall, Reading Log, Achievements)
+
+Owner: Nievethan. Branch: `frontedn-hookup`.
+
+## Summary
+
+Previously, the Flutter frontend only consumed the basic book catalog, page content, and chat endpoints. The backend's new engagement and AI features—Character Map extraction, Word Wall CRUD, Reading Log streaks, and live Achievements—were not connected to the UI, and the Visualize and Progress screens displayed hardcoded static mock data.
+
+This update fully wires the Flutter frontend to the FastAPI backend contract (`docs/API_CONTRACT.md`):
+
+1. **Character Map & Relationships ([visualize_screen.dart](file:///home/nievethan/AvidReader/frontend/lib/screens/visualize_screen.dart))**:
+   - Replaced static Crime & Punishment mockup with live data from `GET /api/v1/books/{id}/relationships`.
+   - Added on-demand "Update" button calling `POST /api/v1/books/{id}/relationships/generate`, extracting grounded characters up to the reader's current page/chapter with zero spoilers.
+   - Shows character role badges, descriptions, boundary tags, and direct relationships with verbatim evidence quotes.
+   - Toggle between **Characters** profile view and **Relationships** connection graph list.
+
+2. **Word Wall & Vocabulary ([progress_screen.dart](file:///home/nievethan/AvidReader/frontend/lib/screens/progress_screen.dart) & [reader_screen.dart](file:///home/nievethan/AvidReader/frontend/lib/screens/reader_screen.dart))**:
+   - Integrated `GET`, `POST`, `DELETE /api/v1/books/{id}/words`.
+   - Reader toolbar now has a **Word Wall** action dialog to save words, definitions, and page quotes.
+   - AI passage explanations in the Reader include a one-tap **"Save to Word Wall"** button.
+   - Dedicated Word Wall tab in Progress screen to browse, add, and delete entries.
+
+3. **Reading Log, Streaks & Achievements ([progress_screen.dart](file:///home/nievethan/AvidReader/frontend/lib/screens/progress_screen.dart))**:
+   - Fetches live streaks and reading calendar history (`GET /api/v1/reading-log`).
+   - Displays all 6 live computed milestones (`GET /api/v1/achievements`) with unlocked/locked visual badges and descriptions.
+   - Tabbed layout: Overview, Word Wall, Achievements, and Reading Log.
+
+4. **Book Library & Deletion ([library_screen.dart](file:///home/nievethan/AvidReader/frontend/lib/screens/library_screen.dart) & [reading_dashboard_shell.dart](file:///home/nievethan/AvidReader/frontend/lib/screens/reading_dashboard_shell.dart))**:
+   - Added book deletion (`DELETE /api/v1/books/{id}`) with confirmation modal, cascading through SQLite, Qdrant vectors, conversations, and Word Wall rows.
+   - Resilient file picker: built `file_selector_service.dart` with automatic fallback to `zenity` (and manual file path entry) for Linux/WSL2 when XDG Desktop Portal is absent.
+
+5. **AI Chat & Spoiler Guard ([ask_ai_screen.dart](file:///home/nievethan/AvidReader/frontend/lib/screens/ask_ai_screen.dart))**:
+   - Added spoiler boundary notes (`spoiler_scope.reason`) to chat messages.
+   - Added quick prompt chips ("What if…", "What happens next?", "Explain themes").
+
+6. **Automated Testing ([widget_test.dart](file:///home/nievethan/AvidReader/frontend/test/widget_test.dart))**:
+   - Updated fake backend test harness to mock `/relationships`, `/words`, `/reading-log`, and `/achievements`.
+
+---
+
 # Changes: character-map AI extraction
 
 Owner: Abinav. Branch: `feature/character-map-ai-extraction` (built on top of

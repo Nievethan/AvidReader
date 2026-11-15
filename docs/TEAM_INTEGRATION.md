@@ -140,37 +140,27 @@ the team before changing them.
 - Upload: `multipart/form-data`, field name `file`, optional `title`/`author` fields.
 - `mode` values in the chat request (`study`/`research`/`creative`)
   match the filter pills already in `Ask AI` in `main.dart`.
-- **New for the frontend (backend ready, frontend not yet wired):**
-  - After upload, `processing_status` is `processing`; poll
-    `GET /api/v1/books/{id}/ingestion` until `ready` / `unsupported` /
-    `failed` and show `message` on failure.
-  - Reader text: `GET /api/v1/books/{id}/content?page=N` (PDF) or
-    `?chapter=N` (EPUB) returns `{content, index, total, title}`; this can
-    replace the sample passage in the reader.
-  - Chat: always send `reading_position` (page for PDF, chapter for EPUB).
-    Citations now carry `page` (the existing `'p. N'` chip keeps working),
-    plus `page_end`, `chapter`, `snippet` and `marker` (matches `[S1]` in
-    the answer text). Show `spoiler_scope.reason` if useful, and treat
-    `answer_type` `refusal`/`unavailable` as non-errors.
-  - **What If / Story Continues already work end to end on the backend** --
-    nothing more to build there. They're just the `interaction_type` field
-    on the same `/ai/chat` request (`"what_if"` / `"story_continues"`), not
-    separate routes. `ask_ai_screen.dart` currently only reaches them by
-    sniffing the question text for a `"what if"` / `"what happens next"`
-    prefix; if you want dedicated buttons/modes instead of relying on
-    exact phrasing, that's a pure frontend decision -- just set
-    `interaction_type` explicitly in the request instead of guessing from
-    text.
-  - **New real endpoints, nothing wired in the frontend yet:**
-    `POST`/`GET`/`DELETE /api/v1/books/{id}/words` (Word Wall storage),
-    `GET /api/v1/books/{id}/relationships` (character map -- real extraction
-    now, but only via an explicit "Update" button: `GET` just reads
-    whatever's cached, `status: "not_available"` until the reader taps
-    Update, which calls `POST .../relationships/generate` and costs a real
-    model call -- do not call `generate` automatically on screen load),
-    `GET /api/v1/reading-log` and `GET /api/v1/achievements` (both global, not
-    per-book -- real computed data, e.g. for the Progress screen's streak
-    and the quiz/flashcards area). Shapes: `docs/API_CONTRACT.md`.
+- **Status (2026-11-14): All backend features fully wired and verified in Flutter:**
+  - **Book Library**:
+    - Upload with ingestion polling (`GET /api/v1/books/{id}/ingestion`).
+    - Platform file selector: uses `file_selector_service.dart` with automatic fallback to `zenity` (or manual path input) on Linux/WSL2 when XDG Desktop Portal is not present.
+    - Book deletion (`DELETE /api/v1/books/{id}`) with confirmation dialog and backend cascade.
+  - **Reader Screen**:
+    - Real page/chapter extracted text (`GET /api/v1/books/{id}/content`).
+    - Progress sync (`PUT /api/v1/books/{id}/progress`), auto-logging daily reading activity.
+    - Contextual explanation (`POST /api/v1/ai/chat` with `interaction_type: "explain"`).
+    - Word Wall shortcut button and one-tap "Save to Word Wall" on explanations.
+  - **Visualize (Character Map)**:
+    - Reads cached characters and relationships (`GET /api/v1/books/{id}/relationships`).
+    - "Update" action triggers real AI extraction (`POST /api/v1/books/{id}/relationships/generate`) bounded strictly by the reader's current page/chapter.
+    - Character profile cards with roles, descriptions, boundary tags, and direct relationship connections with verbatim evidence quotes.
+    - Relationships list view mapping all character connections and text evidence quotes.
+  - **Progress (Engagement & Gamification)**:
+    - Real reading streak counter (`current_streak`, `longest_streak`) and history log (`GET /api/v1/reading-log`).
+    - Live computed achievements (`GET /api/v1/achievements`) displaying all 6 milestones with unlocked/locked badges.
+    - Complete Word Wall view (`GET`, `POST`, `DELETE /api/v1/books/{id}/words`) to browse, add, and delete saved literary terms.
+  - **Ask AI**:
+    - Grounded chat with citations, spoiler guard notes (`spoiler_scope.reason`), and quick prompt helpers (`What if…`, `What happens next?`, `Explain themes`).
 
 ## Arno -- QA / CI
 
