@@ -3,6 +3,14 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import 'models/character_map_item.dart';
+import 'models/engagement_item.dart';
+import 'models/word_wall_item.dart';
+
+export 'models/character_map_item.dart';
+export 'models/engagement_item.dart';
+export 'models/word_wall_item.dart';
+
 /// Base URL of the FastAPI backend. Override at run time with:
 ///   flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 /// (10.0.2.2 is how the Android emulator reaches your computer.)
@@ -119,15 +127,19 @@ class ChatResult {
   final String conversationId;
   final String answer;
   final String providerStatus;
+  final String answerType;
   final bool isHypothetical;
   final List<String> citations;
+  final String? spoilerReason;
 
   ChatResult({
     required this.conversationId,
     required this.answer,
     required this.providerStatus,
+    this.answerType = 'grounded',
     required this.isHypothetical,
     required this.citations,
+    this.spoilerReason,
   });
 }
 
@@ -217,6 +229,84 @@ class ApiClient {
     return ApiBook.fromJson((_decode(res) as Map).cast<String, dynamic>());
   });
 
+  Future<void> deleteBook(String bookId) => _guard(() async {
+    _decode(await _http.delete(_uri('/api/v1/books/$bookId')));
+  });
+
+  Future<RelationshipsResult> getRelationships(String bookId) =>
+      _guard(() async {
+        final data = _decode(
+          await _http.get(_uri('/api/v1/books/$bookId/relationships')),
+        );
+        return RelationshipsResult.fromJson(
+            (data as Map).cast<String, dynamic>());
+      });
+
+  Future<RelationshipsResult> generateRelationships(String bookId) =>
+      _guard(() async {
+        final data = _decode(
+          await _http.post(_uri('/api/v1/books/$bookId/relationships/generate')),
+        );
+        return RelationshipsResult.fromJson(
+            (data as Map).cast<String, dynamic>());
+      });
+
+  Future<List<WordWallEntry>> listWords(String bookId) => _guard(() async {
+        final data = _decode(
+          await _http.get(_uri('/api/v1/books/$bookId/words')),
+        );
+        final items =
+            (data['items'] as List? ?? []).cast<Map<String, dynamic>>();
+        return items.map(WordWallEntry.fromJson).toList();
+      });
+
+  Future<WordWallEntry> addWord(
+    String bookId, {
+    required String word,
+    String? meaning,
+    String? quote,
+    String? sourceLocation,
+  }) =>
+      _guard(() async {
+        final body = <String, dynamic>{
+          'word': word,
+          if (meaning != null && meaning.isNotEmpty) 'meaning': meaning,
+          if (quote != null && quote.isNotEmpty) 'quote': quote,
+          if (sourceLocation != null && sourceLocation.isNotEmpty)
+            'source_location': sourceLocation,
+        };
+        final data = _decode(
+          await _http.post(
+            _uri('/api/v1/books/$bookId/words'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          ),
+        );
+        return WordWallEntry.fromJson((data as Map).cast<String, dynamic>());
+      });
+
+  Future<void> deleteWord(String bookId, String wordId) => _guard(() async {
+        _decode(
+          await _http.delete(_uri('/api/v1/books/$bookId/words/$wordId')),
+        );
+      });
+
+  Future<ReadingLogResult> getReadingLog() => _guard(() async {
+        final data = _decode(
+          await _http.get(_uri('/api/v1/reading-log')),
+        );
+        return ReadingLogResult.fromJson(
+            (data as Map).cast<String, dynamic>());
+      });
+
+  Future<AchievementsResult> getAchievements() => _guard(() async {
+        final data = _decode(
+          await _http.get(_uri('/api/v1/achievements')),
+        );
+        return AchievementsResult.fromJson(
+            (data as Map).cast<String, dynamic>());
+      });
+
   Future<IngestionStatus> getIngestionStatus(String bookId) => _guard(() async {
     final data = _decode(
       await _http.get(_uri('/api/v1/books/$bookId/ingestion')),
@@ -243,6 +333,7 @@ class ApiClient {
     String? conversationId,
     String mode = 'research',
     String interactionType = 'question',
+    String explanationLevel = 'standard',
     String? selectedPassage,
     int? currentPage,
     int? currentChapter,
@@ -257,6 +348,7 @@ class ApiClient {
           'question': question,
           'mode': mode,
           'interaction_type': interactionType,
+          'explanation_level': explanationLevel,
           'selected_passage': selectedPassage,
           'reading_position': {
             'current_page': currentPage,
@@ -270,12 +362,16 @@ class ApiClient {
       if (c is Map && c['page'] != null) return 'p. ${c['page']}';
       return c.toString();
     }).toList();
+    final spoilerScope =
+        data['spoiler_scope'] is Map ? data['spoiler_scope'] as Map : null;
     return ChatResult(
       conversationId: data['conversation_id'] as String,
       answer: data['answer'] as String,
       providerStatus: (data['provider_status'] as String?) ?? '',
+      answerType: (data['answer_type'] as String?) ?? 'grounded',
       isHypothetical: (data['is_hypothetical'] as bool?) ?? false,
       citations: citations,
+      spoilerReason: spoilerScope?['reason'] as String?,
     );
   });
 }

@@ -69,8 +69,97 @@ http.Client _fakeBackend() => MockClient((req) async {
         'provider_status': 'ok',
         'is_hypothetical': false,
         'citations': [],
-        'spoiler_scope': {'restricted_to_progress': false, 'reason': ''},
+        'spoiler_scope': {
+          'restricted_to_progress': true,
+          'reason': 'Limited to page 3 (your current position).'
+        },
         'created_at': '2026-10-30T15:19:59.613607',
+      }),
+      200,
+    );
+  }
+  if (req.method == 'GET' && path == '/api/v1/books/$_bookId/relationships') {
+    return http.Response(
+      jsonEncode({
+        'book_id': _bookId,
+        'status': 'ready',
+        'source': 'extracted',
+        'message': null,
+        'nodes': [
+          {
+            'id': 'char_1',
+            'name': 'Harry Potter',
+            'role': 'protagonist',
+            'description': 'A young wizard with a lightning scar',
+            'first_seen_chunk_id': 'chunk_1',
+          },
+        ],
+        'edges': [
+          {
+            'id': 'rel_1',
+            'source': 'char_1',
+            'target': 'char_2',
+            'relationship': 'ally',
+            'label': 'Saved by friend',
+            'evidence': 'I got him, sir.',
+          },
+        ],
+        'generated_at': '2026-11-12T02:14:52.454839',
+        'boundary_label': 'page 3',
+      }),
+      200,
+    );
+  }
+  if (req.method == 'GET' && path == '/api/v1/reading-log') {
+    return http.Response(
+      jsonEncode({
+        'days': [
+          {
+            'date': '2026-11-12',
+            'book_id': _bookId,
+            'book_title': 'Test Book',
+            'current_page': 3,
+            'current_chapter': 1,
+          },
+        ],
+        'current_streak': 3,
+        'longest_streak': 5,
+      }),
+      200,
+    );
+  }
+  if (req.method == 'GET' && path == '/api/v1/achievements') {
+    return http.Response(
+      jsonEncode({
+        'achievements': [
+          {
+            'id': 'first_upload',
+            'label': 'Shelved your first book',
+            'description': 'Upload a book to your library.',
+            'unlocked': true,
+          },
+        ],
+        'current_streak': 3,
+        'longest_streak': 5,
+      }),
+      200,
+    );
+  }
+  if (req.method == 'GET' && path == '/api/v1/books/$_bookId/words') {
+    return http.Response(
+      jsonEncode({
+        'items': [
+          {
+            'id': 'word_1',
+            'book_id': _bookId,
+            'word': 'lugubrious',
+            'meaning': 'mournful',
+            'quote': 'a lugubrious sigh',
+            'source_location': 'page 3',
+            'created_at': '2026-11-12T01:30:49.419375',
+          },
+        ],
+        'total': 1,
       }),
       200,
     );
@@ -123,6 +212,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ProgressScreen), findsOneWidget);
     expect(find.text('My Progress'), findsOneWidget);
-    expect(find.text('Comprehension by chapter'), findsOneWidget);
+    expect(find.text('Reading progress'), findsOneWidget);
+    expect(find.text('Word Wall (1)'), findsOneWidget);
   });
 }

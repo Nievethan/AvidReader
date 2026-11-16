@@ -23,6 +23,7 @@ table row/section in the same commit or PR**, not as a follow-up:
 | 2026-11-11 | Umer (RAG Steps 1-9, via Claude) | Real ingestion (background, status route, restart recovery), reader text, Qdrant (server or embedded), retrieval with spoiler boundary, grounded answers on Cloudflare Workers AI with citation checks, `eval_rag.py` evaluation. Mocks replaced for ingestion and chat. |
 | 2026-11-12 | Abinav (frontend hookup + engagement features backend, via Claude) | Frontend: Reader now calls real `/content` and `/ingestion` instead of a sample passage (fixed a page-offset bug found during live testing); Ask AI status handling fixed. Backend: Word Wall storage, reading log (auto-logged from progress updates), achievements (computed live, no AI). All live-verified against the running server, not just unit tests. |
 | 2026-11-12 | Abinav (character-map AI extraction, via Claude) | `POST /books/{id}/relationships/generate` now does real one-shot Cloudflare extraction over everything read so far (cached; `GET` is free and only reads the cache). Live-verified against a real book: real character nodes and grounded relationship edges. Found and fixed two real bugs in the process: `CloudflareClient.generate()` discarded valid JSON-mode responses when `result.response` was a parsed object instead of a string (affects any JSON-mode caller, not just this feature); relationship edges were being silently dropped because the model used short names in `relationships` after full names in `characters` (fixed with fuzzy, ambiguity-safe name matching). |
+| 2026-11-14 | Nievethan (frontend full-stack hookup & engagement UI) | Connected all backend endpoints to Flutter UI: live Character Map (cache read + on-demand extraction with evidence quotes), Word Wall CRUD, Reading Log and live computed Achievements in Progress tab, book deletion with cascade, and grounded AI chat with spoiler guard notices. Built resilient file selector service for Linux/WSL with automatic Zenity and manual path fallbacks. |
 
 ## Implemented and tested (real, working code)
 
@@ -80,7 +81,13 @@ table row/section in the same commit or PR**, not as a follow-up:
 
 - **Docker Compose**: Qdrant now always starts and the backend uses `QDRANT_URL=http://qdrant:6333` (`docker compose config` validated on 2026-11-11; the Qdrant container was run and used for vector-store testing). A full `docker compose up --build` of the new backend image with ingestion end to end has not been run yet.
 - No CI workflow exists in the repo yet (Arno's area).
-- Frontend: connected for upload/library/chat/content/ingestion (`frontend/lib/api_client.dart`) as of 2026-11-12 -- the reader shows real page/chapter text and polls ingestion status instead of a sample passage. Still not wired: the new Word Wall, reading-log, achievements and relationships endpoints above (real on the backend, not called from Flutter yet), and the Visualize/Progress screens are still mostly hardcoded mockups unrelated to the uploaded book.
+- Frontend: **fully connected to all backend endpoints as of 2026-11-14** (`frontend/lib/api_client.dart`). Real features live in the UI:
+  - Library: upload, ingestion polling, resume, and book deletion with backend cascade.
+  - Reader: cleaned real text (`/content`), page/chapter progress updates (`/progress`), passage explanations, and "Save to Word Wall".
+  - Visualize: Character Map extraction and cache inspection (`/relationships` & `/relationships/generate`) with role badges, descriptions, and verbatim evidence quotes.
+  - Progress: tabbed dashboard displaying real reading streaks and calendar history (`/reading-log`), live computed badges (`/achievements`), and full Word Wall management (`/words`).
+  - Ask AI: grounded answers with citations, spoiler boundary protection indicators (`spoiler_scope.reason`), and quick prompt chips.
+  - Platform file selector: resilient fallback using `zenity` and manual disk path entry on Linux/WSL2 when XDG Desktop Portal is not present.
 
 ## Quick facts for anyone resuming this work
 
