@@ -16,6 +16,7 @@ class ReaderScreen extends StatefulWidget {
   final VoidCallback onAskAiTap;
   final VoidCallback onVisualizeTap;
   final ValueChanged<int> onPageChange;
+  final ValueChanged<int> onGoToPage;
 
   const ReaderScreen({
     super.key,
@@ -24,6 +25,7 @@ class ReaderScreen extends StatefulWidget {
     required this.onAskAiTap,
     required this.onVisualizeTap,
     required this.onPageChange,
+    required this.onGoToPage,
   });
 
   @override
@@ -150,7 +152,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         mode: 'study',
         interactionType: 'explain',
         selectedPassage: passage,
-        currentPage: widget.book.currentPage,
+        // currentPage is 0-based; the backend's spoiler boundary (and
+        // /content) are 1-based -- same +1 as _loadContent() above.
+        currentPage: widget.book.currentPage + 1,
         currentChapter: widget.book.currentChapter,
       );
       setState(() => _activeExplanation = result.answer);
@@ -264,6 +268,53 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  // PDF page jump only: EPUB chapter navigation isn't wired up anywhere in
+  // the Reader yet (Prev/Next only ever change currentPage, never
+  // currentChapter), so there's no page/chapter number to jump to for EPUB
+  // today -- that's a separate, pre-existing gap, not something this adds.
+  void _showGoToPageDialog() {
+    final total = widget.book.totalPages;
+    final current = widget.book.currentPage + 1; // 1-based for display
+    final controller = TextEditingController(text: '$current');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ClassicLitTheme.parchmentBg,
+        title: const Text('Go to Page'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: total != null ? 'Page number (1-$total)' : 'Page number',
+          ),
+          onSubmitted: (_) => _submitGoToPage(ctx, controller.text),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => _submitGoToPage(ctx, controller.text),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: ClassicLitTheme.oxbloodPrimary,
+              foregroundColor: ClassicLitTheme.inkOnPrimary,
+            ),
+            child: const Text('Go'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _submitGoToPage(BuildContext dialogContext, String text) {
+    final target = int.tryParse(text.trim());
+    if (target == null || target < 1) return;
+    Navigator.pop(dialogContext);
+    widget.onGoToPage(target - 1); // pages are stored 0-based internally
+  }
+
   void _cycleFontSize() {
     setState(() {
       if (_fontSize == 16.0) {
@@ -343,40 +394,51 @@ class _ReaderScreenState extends State<ReaderScreen> {
         Expanded(
           child: ListView(
             padding: const EdgeInsets.all(18),
+            children: _buildPassageContent(),
+          ),
+        ),
+
+        // 4-Button Contextual Selection Toolbar -- fixed in place (not
+        // inside the scrollable passage above), so it's always reachable
+        // without scrolling through the whole page.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+          child: Row(
             children: [
-              ..._buildPassageContent(),
-              const SizedBox(height: 10),
-
-              // 4-Button Contextual Selection Toolbar
-              Row(
-                children: [
-                  _buildSelectionActionButton(
-                    label: 'Explain',
-                    onTap: (_explaining || (_page?.content ?? '').isEmpty)
-                        ? () {}
-                        : _explainPassage,
-                  ),
-                  const SizedBox(width: 6),
-                  _buildSelectionActionButton(
-                    label: 'Ask AI',
-                    onTap: widget.onAskAiTap,
-                  ),
-                  const SizedBox(width: 6),
-                  _buildSelectionActionButton(
-                    label: 'Visualize',
-                    onTap: widget.onVisualizeTap,
-                  ),
-                  const SizedBox(width: 6),
-                  _buildSelectionActionButton(
-                    label: 'Word Wall',
-                    onTap: () => _showAddWordDialog(),
-                  ),
-                ],
+              _buildSelectionActionButton(
+                label: 'Explain',
+                onTap: (_explaining || (_page?.content ?? '').isEmpty)
+                    ? () {}
+                    : _explainPassage,
               ),
+              const SizedBox(width: 6),
+              _buildSelectionActionButton(
+                label: 'Ask AI',
+                onTap: widget.onAskAiTap,
+              ),
+              const SizedBox(width: 6),
+              _buildSelectionActionButton(
+                label: 'Visualize',
+                onTap: widget.onVisualizeTap,
+              ),
+              const SizedBox(width: 6),
+              _buildSelectionActionButton(
+                label: 'Word Wall',
+                onTap: () => _showAddWordDialog(),
+              ),
+            ],
+          ),
+        ),
 
-              if (_activeExplanation != null) ...[
-                const SizedBox(height: 12),
-                PaperCard(
+        // Explanation panel -- also fixed in place, with its own bounded
+        // height + internal scroll, so it never gets lost below the fold.
+        if (_activeExplanation != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 180),
+              child: SingleChildScrollView(
+                child: PaperCard(
                   backgroundColor: ClassicLitTheme.elevatedPaper,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -420,11 +482,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     ],
                   ),
                 ),
-              ],
-
-            ],
+              ),
+            ),
           ),
-        ),
 
         // Bottom Chapter Progress Footer Card
         Padding(
@@ -444,19 +504,37 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           ? () => widget.onPageChange(-1)
                           : null,
                     ),
-                    Text(
-                      widget.book.pagesLabel,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: ClassicLitTheme.inkSecondary,
+                    InkWell(
+                      onTap: widget.book.fileType.toLowerCase() == 'epub'
+                          ? null
+                          : _showGoToPageDialog,
+                      borderRadius: BorderRadius.circular(4),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        child: Text(
+                          widget.book.pagesLabel,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: ClassicLitTheme.inkSecondary,
+                            decoration: TextDecoration.underline,
+                            decorationStyle: TextDecorationStyle.dotted,
+                          ),
+                        ),
                       ),
                     ),
                     IconButton(
                       tooltip: 'Next page',
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.chevron_right, size: 20),
-                      onPressed: () => widget.onPageChange(1),
+                      onPressed: (widget.book.totalPages == null ||
+                              widget.book.currentPage <
+                                  widget.book.totalPages! - 1)
+                          ? () => widget.onPageChange(1)
+                          : null,
                     ),
                     const Spacer(),
                     Text(
@@ -507,7 +585,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
         'ready' => 'No text found for this page.',
         _ => 'This book isn\'t ready to read yet.',
       };
-      return [_statusMessage(message)];
+      final isIndexing =
+          ingestion == null || ingestion.status == 'processing';
+      return [
+        _statusMessage(message),
+        if (isIndexing) ...[
+          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 40),
+            child: LinearProgressIndicator(
+              color: ClassicLitTheme.oxbloodPrimary,
+              backgroundColor: ClassicLitTheme.elevatedPaper,
+            ),
+          ),
+        ],
+      ];
     }
 
     return [

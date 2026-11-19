@@ -4,25 +4,40 @@ import 'package:frontend/main.dart';
 import '../models/book_item.dart';
 import '../models/chat_message.dart';
 import '../theme/classic_lit_theme.dart';
-import '../widgets/filter_pill_row.dart';
 import '../widgets/paper_card.dart';
 import '../widgets/vintage_progress_bar.dart';
 import '../api_client.dart';
 
 class AskAiScreen extends StatefulWidget {
   final BookItem book;
+  final VoidCallback onBackToReaderTap;
 
-  const AskAiScreen({super.key, required this.book});
+  const AskAiScreen({
+    super.key,
+    required this.book,
+    required this.onBackToReaderTap,
+  });
 
   @override
   State<AskAiScreen> createState() => _AskAiScreenState();
 }
 
 class _AskAiScreenState extends State<AskAiScreen> {
-  int _selectedModeIndex = 0;
+  int _selectedInteractionIndex = 0;
   final TextEditingController _promptController = TextEditingController();
 
-  static const List<String> _modes = ['study', 'research', 'creative'];
+  static const List<String> _interactionLabels = [
+    'Ask',
+    'Explain',
+    'What if',
+    'Continue',
+  ];
+  static const List<String> _interactionTypes = [
+    'question',
+    'explain',
+    'what_if',
+    'story_continues',
+  ];
 
   final List<ChatMessage> _messages = [];
   String? _conversationId;
@@ -48,21 +63,15 @@ class _AskAiScreenState extends State<AskAiScreen> {
       _sending = true;
     });
 
-    final lower = text.toLowerCase();
-    final interactionType = lower.startsWith('what if')
-        ? 'what_if'
-        : (lower.startsWith('what happens next')
-              ? 'story_continues'
-              : 'question');
-
     try {
       final result = await api.chat(
         bookId: widget.book.id,
         conversationId: _conversationId,
         question: text,
-        mode: _modes[_selectedModeIndex],
-        interactionType: interactionType,
-        currentPage: widget.book.currentPage,
+        interactionType: _interactionTypes[_selectedInteractionIndex],
+        // currentPage is 0-based; the backend's spoiler boundary (and
+        // /content) are 1-based.
+        currentPage: widget.book.currentPage + 1,
         currentChapter: widget.book.currentChapter,
       );
       final notes = [
@@ -117,34 +126,45 @@ class _AskAiScreenState extends State<AskAiScreen> {
             ),
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Ask AI', style: Theme.of(context).textTheme.headlineSmall),
-              Text(
-                widget.book.title,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: ClassicLitTheme.inkSecondary,
+              // Expanded so the Row below actually gets a bounded width --
+              // without it, Flexible+ellipsis on the title never kicks in
+              // and a long filename overflows the header.
+              Expanded(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.book.title,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: ClassicLitTheme.inkSecondary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.menu_book_outlined, size: 18),
+                      tooltip: 'Back to Reader',
+                      onPressed: widget.onBackToReaderTap,
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
         ),
 
-        // Mode Filter Pills + Chat History
+        // Chat History
         Expanded(
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              FilterPillRow(
-                options: const ['Study', 'Research', 'Creative'],
-                selectedIndex: _selectedModeIndex,
-                onSelected: (index) =>
-                    setState(() => _selectedModeIndex = index),
-              ),
-              const SizedBox(height: 16),
-
               // Message Bubbles
               ..._messages.map((msg) => _buildChatBubble(msg)),
 
@@ -152,7 +172,9 @@ class _AskAiScreenState extends State<AskAiScreen> {
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Text(
-                    'Ask anything about this book. Start with "What if…" for a hypothetical.',
+                    'Ask anything about this book. Tap the tag in the box '
+                    'below to switch between Ask, Explain, What if, and '
+                    'Continue.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: ClassicLitTheme.inkSecondary),
                   ),
@@ -204,25 +226,6 @@ class _AskAiScreenState extends State<AskAiScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    _buildQuickPromptChip('What if…', 'What if '),
-                    const SizedBox(width: 6),
-                    _buildQuickPromptChip(
-                      'What happens next?',
-                      'What happens next?',
-                    ),
-                    const SizedBox(width: 6),
-                    _buildQuickPromptChip(
-                      'Explain themes',
-                      'Explain the key themes in this part of the book.',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
               const Text(
                 'Answers are spoiler-protected up to your reading position.',
                 style: TextStyle(
@@ -241,6 +244,19 @@ class _AskAiScreenState extends State<AskAiScreen> {
                         onSubmitted: (_) => _handleSend(),
                         style: const TextStyle(fontSize: 13),
                         decoration: InputDecoration(
+                          // The active mode as a Discord-style command tag
+                          // living inside the input itself, instead of a
+                          // separate pill row disconnected from where you
+                          // actually type (and which used to scroll away
+                          // with the message history).
+                          prefixIconConstraints: const BoxConstraints(
+                            minWidth: 0,
+                            minHeight: 0,
+                          ),
+                          prefixIcon: Padding(
+                            padding: const EdgeInsets.only(left: 6, right: 4),
+                            child: _buildModeTag(),
+                          ),
                           hintText: 'Ask about this book...',
                           hintStyle: const TextStyle(
                             fontSize: 13,
@@ -372,33 +388,44 @@ class _AskAiScreenState extends State<AskAiScreen> {
     );
   }
 
-  Widget _buildQuickPromptChip(String label, String prompt) {
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _promptController.text = prompt;
-          _promptController.selection = TextSelection.fromPosition(
-            TextPosition(offset: _promptController.text.length),
-          );
-        });
-      },
-      borderRadius: BorderRadius.circular(12),
+  // The current mode shown as a tappable tag, like a Discord slash-command
+  // block sitting right before the text you type.
+  Widget _buildModeTag() {
+    return PopupMenuButton<int>(
+      tooltip: 'Change mode',
+      initialValue: _selectedInteractionIndex,
+      onSelected: (index) => setState(() => _selectedInteractionIndex = index),
+      itemBuilder: (context) => List.generate(
+        _interactionLabels.length,
+        (i) => PopupMenuItem(value: i, child: Text(_interactionLabels[i])),
+      ),
+      padding: EdgeInsets.zero,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
-          color: ClassicLitTheme.elevatedPaper,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: ClassicLitTheme.deckleBorder),
+          color: ClassicLitTheme.oxbloodPrimary,
+          borderRadius: BorderRadius.circular(4),
         ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: ClassicLitTheme.oxbloodPrimary,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _interactionLabels[_selectedInteractionIndex],
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: ClassicLitTheme.inkOnPrimary,
+              ),
+            ),
+            const Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: ClassicLitTheme.inkOnPrimary,
+            ),
+          ],
         ),
       ),
     );
   }
+
 }
