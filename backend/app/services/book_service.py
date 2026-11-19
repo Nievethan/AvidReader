@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -14,7 +15,13 @@ from app.db import database
 from app.integrations.interfaces import IngestionProvider, IngestionResult
 from app.models.books import Book
 from app.rag.extracted_store import ExtractedTextStore
-from app.repositories import ai_repository, book_repository, character_graph_repository, engagement_repository
+from app.repositories import (
+    ai_repository,
+    book_repository,
+    character_graph_repository,
+    character_portrait_repository,
+    engagement_repository,
+)
 from app.schemas.books import BookContentResponse
 from app.services.file_validation import detect_file_type, sanitize_filename
 
@@ -197,9 +204,11 @@ class BookService:
         path = Path(book.stored_path)
         engagement_repository.delete_for_book(db, book_id)
         character_graph_repository.delete_for_book(db, book_id)
+        character_portrait_repository.delete_for_book(db, book_id)
         ai_repository.delete_for_book(db, book_id)
         book_repository.delete_book(db, book)
         if path.exists():
             path.unlink()
+        shutil.rmtree(self.settings.portraits_dir / book_id, ignore_errors=True)
         # Vectors + saved text. Never raises, so deletion works while Qdrant is down.
         self.ingestion_provider.remove(book_id)

@@ -28,9 +28,11 @@ from app.rag.llm import ChatModel
 logger = logging.getLogger(__name__)
 
 _REQUIRED_SHAPE = (
-    '{"characters":[{"name":"Harry","traits":["brave"],"description":"a young wizard","role":"protagonist"}],'
-    '"relationships":[{"source":"Harry","target":"Hagrid","relationship":"ally",'
-    '"label":"Hagrid brought Harry his letter","evidence":"exact short quote from the excerpts"}]}'
+    '{"characters":[{"name":"<name as written in the excerpts>","traits":["<trait>"],'
+    '"description":"<who they are, from the excerpts>","role":"<protagonist|antagonist|ally|family|minor|...>",'
+    '"appearance":"<how they look, from the excerpts, no names>"}],'
+    '"relationships":[{"source":"<character name>","target":"<character name>","relationship":"<one word>",'
+    '"label":"<one short sentence>","evidence":"<exact short quote from the excerpts>"}]}'
 )
 
 _SYSTEM_PROMPT = (
@@ -50,7 +52,10 @@ def _build_messages(passages: list[RetrievedPassage]) -> list[dict]:
         "TASK: Extract the characters and their explicitly supported relationships.\n"
         f"REQUIRED JSON SHAPE (replace placeholders with real content): {_REQUIRED_SHAPE}\n"
         "Every evidence field must be an exact short quote (under 25 words) copied verbatim from "
-        "the excerpts above. Output JSON only."
+        "the excerpts above. Each appearance field is a short visual description (under 40 words) of how "
+        "the character looks, using only details stated or clearly implied by the excerpts (approximate age, "
+        "sex, build, hair, eyes, clothing, era) -- never include any names, and use \"\" if the excerpts give "
+        "nothing. Output JSON only."
     )
     return [{"role": "system", "content": _SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
@@ -136,6 +141,7 @@ def _normalize(raw: dict, passages: list[RetrievedPassage]) -> tuple[list[dict],
         traits_list = [_plain_text(t, 50) for t in traits[:8] if isinstance(t, str)] if isinstance(traits, list) else []
         description = _plain_text(entry.get("description"), 400)
         role = _plain_text(entry.get("role") or "unknown", 40)
+        appearance = _plain_text(entry.get("appearance"), 300)
         nodes.append(
             {
                 "id": char_id,
@@ -143,6 +149,7 @@ def _normalize(raw: dict, passages: list[RetrievedPassage]) -> tuple[list[dict],
                 "role": role,
                 "description": (description + (f" Traits: {', '.join(traits_list)}." if traits_list else "")).strip(),
                 "first_seen_chunk_id": first_seen.chunk_id,
+                "appearance": appearance or None,
             }
         )
 

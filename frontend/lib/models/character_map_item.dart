@@ -4,6 +4,11 @@ class CharacterNode {
   final String? role;
   final String? description;
   final String? firstSeenChunkId;
+  final String? appearance;
+  // "none" | "pending" | "ready" | "failed"
+  final String portraitStatus;
+  // Relative to the API base URL, e.g. /api/v1/books/{id}/characters/{cid}/portrait?v=...
+  final String? portraitUrl;
 
   const CharacterNode({
     required this.id,
@@ -11,7 +16,13 @@ class CharacterNode {
     this.role,
     this.description,
     this.firstSeenChunkId,
+    this.appearance,
+    this.portraitStatus = 'none',
+    this.portraitUrl,
   });
+
+  bool get hasPortrait => portraitStatus == 'ready' && portraitUrl != null;
+  bool get portraitPending => portraitStatus == 'pending';
 
   factory CharacterNode.fromJson(Map<String, dynamic> json) => CharacterNode(
         id: json['id'] as String,
@@ -19,6 +30,9 @@ class CharacterNode {
         role: json['role'] as String?,
         description: json['description'] as String?,
         firstSeenChunkId: json['first_seen_chunk_id'] as String?,
+        appearance: json['appearance'] as String?,
+        portraitStatus: (json['portrait_status'] as String?) ?? 'none',
+        portraitUrl: json['portrait_url'] as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -27,6 +41,9 @@ class CharacterNode {
         'role': role,
         'description': description,
         'first_seen_chunk_id': firstSeenChunkId,
+        'appearance': appearance,
+        'portrait_status': portraitStatus,
+        'portrait_url': portraitUrl,
       };
 }
 

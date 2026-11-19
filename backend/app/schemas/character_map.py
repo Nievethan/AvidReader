@@ -11,6 +11,11 @@ class CharacterNode(BaseModel):
     role: str | None = None
     description: str | None = None
     first_seen_chunk_id: str | None = None
+    # Visual description extracted from the text read so far (no names).
+    appearance: str | None = None
+    # Filled from the character_portraits table at response time.
+    portrait_status: str = "none"  # "none" | "pending" | "ready" | "failed"
+    portrait_url: str | None = None
 
 
 class CharacterEdge(BaseModel):

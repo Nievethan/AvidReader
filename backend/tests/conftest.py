@@ -29,6 +29,7 @@ def _build_client(tmp_path, monkeypatch, **extra_env: str) -> TestClient:
     monkeypatch.setenv("QDRANT_URL", "")
     monkeypatch.setenv("QDRANT_LOCAL_PATH", ":memory:")
     monkeypatch.setenv("EXTRACTED_DIR", str(tmp_path / "extracted"))
+    monkeypatch.setenv("PORTRAITS_DIR", str(tmp_path / "portraits"))
     monkeypatch.setenv("RETRIEVAL_MIN_SCORE", "0.05")
     for key, value in extra_env.items():
         monkeypatch.setenv(key, value)
