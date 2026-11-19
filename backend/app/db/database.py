@@ -40,6 +40,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "chunk_count": "INTEGER",
         "ingestion_attempts": "INTEGER NOT NULL DEFAULT 0",
     },
+    "character_graph_cache": {
+        "processed_through_order": "INTEGER",
+    },
 }
 
 
@@ -50,6 +53,8 @@ def add_missing_columns(bind) -> list[str]:
     inspector = inspect(bind)
     with bind.begin() as connection:
         for table, columns in _ADDED_COLUMNS.items():
+            if not inspector.has_table(table):
+                continue  # create_all makes it with every column
             existing = {column["name"] for column in inspector.get_columns(table)}
             for name, ddl in columns.items():
                 if name not in existing:

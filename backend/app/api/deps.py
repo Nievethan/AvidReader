@@ -124,6 +124,8 @@ def get_character_graph_provider() -> CharacterGraphProvider:
         retrieval_provider=get_retrieval_provider(),
         chat_model=chat_model,
         max_tokens=settings.character_map_max_tokens,
+        batch_chars=settings.character_map_batch_chars,
+        max_batches=settings.character_map_max_batches,
     )
 
 

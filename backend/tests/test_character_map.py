@@ -244,7 +244,9 @@ def test_not_available_provider_returns_empty_graph():
     result = asyncio.run(
         NotAvailableCharacterGraphProvider().get_graph("book-1", ReadingBoundary(book_id="book-1"))
     )
-    assert result == GraphResult(book_id="book-1", status="not_available", nodes=[], edges=[], source="none")
+    assert result.status == "not_available"
+    assert result.nodes == [] and result.edges == []
+    assert "Cloudflare" in result.message  # honest reason, not "isn't connected yet"
 
 
 def test_deleting_a_book_removes_its_character_graph_cache(client):
