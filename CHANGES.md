@@ -147,6 +147,131 @@ Backend suite: **232 passed**.
 
 ---
 
+# Changes: AI character portraits (Visualize → Characters)
+
+Owner: Umer. Branch: `Image-Generation`. Full design: `docs/CHARACTER_PORTRAITS_PLAN.md`.
+
+## Summary
+
+The Visualize → Characters screen used to show a plain Material icon for every
+character, picked by role. It now shows a **photorealistic AI portrait** for each
+character, generated with Cloudflare Workers AI's
+`@cf/black-forest-labs/flux-1-schnell`. That model is hosted by Cloudflare (not
+"Third-party"), so it runs on the free 10,000 neurons/day allowance. A
+1024×1024 portrait at 8 steps costs about 96 neurons, so roughly 100
+portraits/day fit in the free tier.
+
+Rules:
+
+1. **Generated once, kept forever.** Moving to a later chapter and tapping
+   **Update** reuses each existing character's exact same image, with no model
+   call. Portraits are stored in their own table and folder, separate from
+   `character_graph_cache`, which Update still replaces wholesale.
+2. **New characters get portraits on Update.** A character first introduced in a
+   later chapter gets one image generated the next time the reader taps Update.
+   Only characters without a portrait cost anything.
+3. **No upgrades and no regenerate button.** If a later chapter describes a
+   character in more detail, the existing portrait stays as it is (intentional).
+4. **No spoilers and no actor likenesses.** The prompt is built only from an
+   `appearance` description extracted from the text read so far. Every character
+   name and the book title are scrubbed out, which also stops the model from
+   copying a film actor's face (e.g. for Harry Potter).
+
+**How it works:** `POST .../relationships/generate` extracts the graph as before,
+then `PortraitService.sync()` matches each character to an existing portrait in
+three steps:
+
+1. **Exact match:** same `char_id`, or a stored alias of one.
+2. **Name variant:** e.g. "Dudley" → "Dudley Dursley". This only happens when
+   exactly one portrait matches. Titles count as name words, so "Mr. Dursley" and
+   "Mrs. Dursley" never share a portrait, and an ambiguous "Dursley" gets its own.
+3. **Otherwise:** the character is new, so a `pending` portrait row is created.
+
+The response returns immediately. Images are generated in a FastAPI background
+task, at most 2 at a time. A failed generation (rate limit, network) is marked
+`failed`, never fails the Update, and is retried on the next Update. The app
+shows a pulsing placeholder for pending portraits and re-checks the free cached
+`GET /relationships` every 3 seconds (for up to 3 minutes) until they're ready.
+
+**Live finding:** the Cloudflare docs example sends a `seed`, but the live
+flux-1-schnell schema rejects any property other than `prompt` and `steps`, so
+`generate_image()` sends only those two. This means a portrait isn't
+reproducible from its prompt. That doesn't matter, because a ready portrait is
+never regenerated and its saved JPEG is the source of truth.
+
+## Backend
+
+| File | Change |
+|---|---|
+| `app/integrations/cloudflare.py` | New `CloudflareClient.generate_image()`: `{prompt, steps}` → decodes `result.image` (base64 JPEG). Raises `CloudflareError` on a missing or invalid image. Reuses `run()` retries. |
+| `app/integrations/character_graph.py` | Extraction prompt/shape now asks for `appearance`: a short, name-free visual description, using only details stated or clearly implied by the excerpts. Stored on each node (capped at 300 chars). |
+| `app/integrations/portraits.py` (new) | `PortraitGenerator` protocol, `CloudflarePortraitGenerator`, offline `NotAvailablePortraitGenerator`, `build_portrait_prompt()` and `scrub_names()`, which removes name words, possessives and plurals ("Harry's", "Potters") and the book title. |
+| `app/models/character_portrait.py` (new) | `character_portraits` table: PK `(book_id, char_id)`, `name`, `aliases_json`, `appearance`, `prompt` (exact text sent to Flux, for debugging), `image_path`, `status` (`pending`/`ready`/`failed`), `error`. Created by `create_all`, so no migration is needed. |
+| `app/repositories/character_portrait_repository.py` (new) | CRUD plus alias lookup. |
+| `app/services/portrait_service.py` (new) | Matching (`sync`), background generation (`run_jobs`, semaphore, in-memory de-dupe of active jobs), `attach` (fills `portrait_status`/`portrait_url` on response nodes), `portrait_file`, `delete_for_book`. |
+| `app/schemas/character_map.py` | `CharacterNode` gains `appearance`, `portrait_status` (`none`/`pending`/`ready`/`failed`) and `portrait_url`. |
+| `app/api/v1/character_map.py` | `GET /relationships` attaches portrait status. `POST /generate` syncs portraits and schedules jobs. **New** `GET /api/v1/books/{id}/characters/{char_id}/portrait` serves the JPEG (also resolves aliases) and returns 404 while pending or when there's no portrait. The URL carries `?v=<updated_at>`, so it's served with a long cache header. |
+| `app/api/v1/router.py`, `app/api/deps.py`, `app/models/__init__.py` | Registered the new router, `get_portrait_generator()`/`get_portrait_service()` (Cloudflare when credentials are set, otherwise no portraits and the UI keeps icons), and the new model. |
+| `app/services/book_service.py` | `DELETE /books/{id}` also deletes portrait rows and `PORTRAITS_DIR/{book_id}/`. |
+
+## Frontend
+
+| File | Change |
+|---|---|
+| `lib/models/character_map_item.dart` | `CharacterNode` gains `appearance`, `portraitStatus`, `portraitUrl`, `hasPortrait` and `portraitPending`. |
+| `lib/api_client.dart` | `absoluteUrl(path)` helper for the relative `portrait_url`. |
+| `lib/widgets/character_portrait.dart` (new) | Shows the image (fade-in, falls back to the icon on load error), a pulsing placeholder while pending, or the role icon for `none`/`failed`. |
+| `lib/screens/visualize_screen.dart` | 132px portrait in the main character card with a "Painting portrait…" caption while pending, 44px round portraits in the "Characters in this chapter" strip, 3-second polling while any portrait is pending (stops when done, after 3 minutes, on book change or on dispose), and a snackbar like "Painting 2 new portraits…". |
+
+## New settings (`backend/.env`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CLOUDFLARE_IMAGE_MODEL` | `@cf/black-forest-labs/flux-1-schnell` | Text-to-image model |
+| `PORTRAITS_DIR` | `./data/portraits` | Where portrait JPEGs are saved (`{book_id}/{char_id}.jpg`) |
+| `PORTRAIT_STEPS` | `8` | Diffusion steps (clamped to 1–8; 8 is flux-1-schnell's max and best quality) |
+| `PORTRAIT_CONCURRENCY` | `2` | Max portraits generated at once |
+| `PORTRAIT_TIMEOUT_SECONDS` | `60` | Per-image request timeout |
+
+## Testing
+
+`pytest -q` → **233 passed** (217 existing + 16 new in
+`tests/test_character_portraits.py`), fully offline using a stub
+`PortraitGenerator` and stub chat model. `tests/conftest.py` now points
+`PORTRAITS_DIR` at a temp folder. The new tests cover:
+
+- a first Update generates every portrait
+- **a later Update reuses existing images byte-for-byte and generates only the new character**
+- name-variant reuse and alias resolution
+- Mr./Mrs. never share a portrait, and an ambiguous name isn't guessed
+- prompts contain no character names or book title
+- a failed portrait is retried on the next Update without failing it
+- the portrait endpoint returns 404s when it should
+- deleting a book removes its portrait rows and files
+- offline mode reports `portrait_status: "none"`
+- `generate_image()` builds the right payload and rejects bad responses
+
+`flutter analyze` is clean apart from one info-level lint in code that was
+already there. The Flutter smoke test (`test/widget_test.dart`) fails on a
+`RenderFlex` overflow in `progress_screen.dart`. That failure already exists on
+the base commit without these changes.
+
+## Known limitations
+
+- **Realism depends on the text.** A character the book never physically
+  describes gets a generic, but consistent, portrait.
+- **Old cached graphs have no portraits.** Graphs cached before this change have
+  no `appearance`, so the first Update afterwards generates portraits for all
+  current characters.
+- **Free daily limit:** the 10,000 neurons/day are shared with extraction,
+  embeddings and Ask AI. When they run out, portraits are marked `failed`, the
+  icons stay, and the next Update retries them.
+- **In-process jobs:** background jobs run in the same process. If the server
+  restarts mid-generation, the `pending` portraits are re-queued on the next
+  Update.
+
+---
+
 # Changes: Frontend Full-Stack Integration (Character Map, Word Wall, Reading Log, Achievements)
 
 Owner: Nievethan. Branch: `frontedn-hookup`.

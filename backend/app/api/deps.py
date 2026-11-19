@@ -10,6 +10,11 @@ from app.integrations.character_graph import LLMCharacterGraphProvider, NotAvail
 from app.integrations.cloudflare import CloudflareClient
 from app.integrations.grounded_answer import GroundedAnswerProvider
 from app.integrations.interfaces import CharacterGraphProvider
+from app.integrations.portraits import (
+    CloudflarePortraitGenerator,
+    NotAvailablePortraitGenerator,
+    PortraitGenerator,
+)
 from app.integrations.rag_ingestion import RagIngestionProvider
 from app.integrations.rag_retrieval import RagRetrievalProvider
 from app.rag.chunking import ChunkingConfig
@@ -20,6 +25,7 @@ from app.rag.vector_store import QdrantVectorStore, build_vector_store
 from app.services.achievements_service import AchievementsService
 from app.services.ai_service import AIService
 from app.services.book_service import BookService
+from app.services.portrait_service import PortraitService
 from app.services.progress_service import ProgressService
 from app.services.reading_log_service import ReadingLogService
 from app.services.word_wall_service import WordWallService
@@ -130,6 +136,32 @@ def get_character_graph_provider() -> CharacterGraphProvider:
 
 
 @lru_cache
+def get_portrait_generator() -> PortraitGenerator:
+    """Cloudflare text-to-image when credentials are set; otherwise no
+    portraits are generated and the UI keeps its role icons."""
+    settings = get_settings()
+    client = get_cloudflare_client()
+    if client is None:
+        return NotAvailablePortraitGenerator()
+    return CloudflarePortraitGenerator(
+        client,
+        settings.cloudflare_image_model,
+        steps=settings.portrait_steps,
+        timeout=settings.portrait_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_portrait_service() -> PortraitService:
+    settings = get_settings()
+    return PortraitService(
+        generator=get_portrait_generator(),
+        portraits_dir=settings.portraits_dir,
+        concurrency=settings.portrait_concurrency,
+    )
+
+
+@lru_cache
 def get_ai_service() -> AIService:
     settings = get_settings()
     return AIService(
@@ -154,6 +186,8 @@ _CACHED = (
     get_word_wall_service,
     get_achievements_service,
     get_character_graph_provider,
+    get_portrait_generator,
+    get_portrait_service,
     get_ai_service,
 )
 

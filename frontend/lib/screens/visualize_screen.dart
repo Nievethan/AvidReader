@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../main.dart';
 import '../models/book_item.dart';
 import '../theme/classic_lit_theme.dart';
+import '../widgets/character_portrait.dart';
 import '../widgets/filter_pill_row.dart';
 import '../widgets/paper_card.dart';
 import '../widgets/vintage_progress_bar.dart';
@@ -26,6 +29,13 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
   String? _error;
   RelationshipsResult? _result;
 
+  // Portraits are painted in the background after an Update; poll the
+  // (free, cached) GET endpoint until none are pending.
+  static const _portraitPollInterval = Duration(seconds: 3);
+  static const _portraitPollMaxDuration = Duration(minutes: 3);
+  Timer? _portraitPollTimer;
+  DateTime? _portraitPollStartedAt;
+
   @override
   void initState() {
     super.initState();
@@ -33,10 +43,55 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
   }
 
   @override
+  void dispose() {
+    _stopPortraitPolling();
+    super.dispose();
+  }
+
+  bool _hasPendingPortraits(RelationshipsResult? res) =>
+      res?.nodes.any((n) => n.portraitPending) ?? false;
+
+  void _syncPortraitPolling() {
+    if (!_hasPendingPortraits(_result)) {
+      _stopPortraitPolling();
+      return;
+    }
+    if (_portraitPollTimer != null) return;
+    _portraitPollStartedAt = DateTime.now();
+    _portraitPollTimer =
+        Timer.periodic(_portraitPollInterval, (_) => _pollPortraits());
+  }
+
+  void _stopPortraitPolling() {
+    _portraitPollTimer?.cancel();
+    _portraitPollTimer = null;
+    _portraitPollStartedAt = null;
+  }
+
+  Future<void> _pollPortraits() async {
+    final startedAt = _portraitPollStartedAt;
+    if (startedAt != null &&
+        DateTime.now().difference(startedAt) > _portraitPollMaxDuration) {
+      _stopPortraitPolling();
+      return;
+    }
+    final bookId = widget.book.id;
+    try {
+      final res = await api.getRelationships(bookId);
+      if (!mounted || widget.book.id != bookId) return;
+      setState(() => _result = res);
+      _syncPortraitPolling();
+    } on ApiException {
+      // Transient: try again on the next tick.
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant VisualizeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.book.id != widget.book.id) {
       _selectedCharacterIndex = 0;
+      _stopPortraitPolling();
       _loadRelationships();
     }
   }
@@ -56,6 +111,7 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
           _selectedCharacterIndex = 0;
         }
       });
+      _syncPortraitPolling();
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -80,6 +136,8 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
           _selectedCharacterIndex = 0;
         }
       });
+      _syncPortraitPolling();
+      final painting = res.nodes.where((n) => n.portraitPending).length;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           // The backend's message wins: it explains partial progress
@@ -88,6 +146,7 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
             res.message ??
                 (res.isReady && res.nodes.isNotEmpty
                     ? 'Extracted ${res.nodes.length} characters & ${res.edges.length} relationships!'
+                        '${painting > 0 ? ' Painting $painting new portrait${painting == 1 ? '' : 's'}…' : ''}'
                     : 'Extraction complete.'),
           ),
         ),
@@ -308,7 +367,7 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
 
         // Character Thumbnail Strip
         SizedBox(
-          height: 72,
+          height: 92,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: nodes.length,
@@ -336,10 +395,12 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        _iconForRole(char.role),
-                        size: 20,
-                        color: isSelected
+                      CharacterPortrait(
+                        node: char,
+                        size: 44,
+                        circular: true,
+                        fallbackIcon: _iconForRole(char.role),
+                        iconColor: isSelected
                             ? ClassicLitTheme.oxbloodPrimary
                             : ClassicLitTheme.inkSecondary,
                       ),
@@ -441,7 +502,8 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
       children: [
         // Main Etching / Character Focus Canvas
         Container(
-          height: 180,
+          constraints: const BoxConstraints(minHeight: 180),
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
           width: double.infinity,
           decoration: BoxDecoration(
             color: ClassicLitTheme.linenCard,
@@ -454,13 +516,29 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                _iconForRole(currentCharacter.role),
-                size: 52,
-                color: ClassicLitTheme.oxbloodPrimary.withValues(
+              CharacterPortrait(
+                key: ValueKey('hero-${currentCharacter.id}'),
+                node: currentCharacter,
+                size: currentCharacter.hasPortrait ||
+                        currentCharacter.portraitPending
+                    ? 132
+                    : 60,
+                fallbackIcon: _iconForRole(currentCharacter.role),
+                iconColor: ClassicLitTheme.oxbloodPrimary.withValues(
                   alpha: 0.85,
                 ),
               ),
+              if (currentCharacter.portraitPending) ...[
+                const SizedBox(height: 6),
+                const Text(
+                  'Painting portrait…',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontStyle: FontStyle.italic,
+                    color: ClassicLitTheme.inkSecondary,
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               Text(
                 currentCharacter.name,

@@ -59,6 +59,11 @@ NO_CHARACTERS_MESSAGE = "No characters found yet in what you've read."
 # copied into the output as if it were extracted from the excerpts.
 _REQUIRED_SHAPE = (
     '{"characters":[{"name":"<name as written in the excerpts>","traits":["<trait>"],'
+    '"description":"<who they are, from the excerpts>","role":"<protagonist|antagonist|ally|family|minor|...>",'
+    '"appearance":"<how they look, from the excerpts, no names>"}],'
+    '"relationships":[{"source":"<character name>","target":"<character name>","relationship":"<one word>",'
+    '"label":"<one short sentence>","evidence":"<exact short quote from the excerpts>"}]}'
+    '{"characters":[{"name":"<name as written in the excerpts>","traits":["<trait>"],'
     '"description":"<who they are, from the excerpts>","role":"<protagonist|antagonist|ally|family|minor|...>"}],'
     '"relationships":[{"source":"<character name>","target":"<character name>","relationship":"<one word>",'
     '"label":"<one short sentence>","evidence":"<exact short quote from the excerpts>"}]}'
@@ -90,6 +95,10 @@ def _build_messages(passages: list[RetrievedPassage], known_names: list[str] | N
         "TASK: Extract the characters and their explicitly supported relationships in these excerpts.\n"
         f"REQUIRED JSON SHAPE (replace every <placeholder> with real content): {_REQUIRED_SHAPE}\n"
         "Every evidence field must be an exact short quote (under 25 words) copied verbatim from "
+        "the excerpts above. Each appearance field is a short visual description (under 40 words) of how "
+        "the character looks, using only details stated or clearly implied by the excerpts (approximate age, "
+        "sex, build, hair, eyes, clothing, era) -- never include any names, and use \"\" if the excerpts give "
+        "nothing. Output JSON only."
         "the excerpts above. Inside JSON string values, write any double quotation marks from the book "
         "as single quotes (') so the JSON stays valid. Output JSON only."
     )
@@ -237,6 +246,7 @@ def _normalize(
         traits_list = [_plain_text(t, 50) for t in traits[:8] if isinstance(t, str)] if isinstance(traits, list) else []
         description = _plain_text(entry.get("description"), 400)
         role = _plain_text(entry.get("role") or "unknown", 40)
+        appearance = _plain_text(entry.get("appearance"), 300)
         nodes.append(
             {
                 "id": char_id,
@@ -244,6 +254,7 @@ def _normalize(
                 "role": role,
                 "description": (description + (f" Traits: {', '.join(traits_list)}." if traits_list else "")).strip(),
                 "first_seen_chunk_id": first_seen.chunk_id,
+                "appearance": appearance or None,
             }
         )
 

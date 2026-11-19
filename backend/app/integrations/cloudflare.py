@@ -20,6 +20,8 @@ result.response (classic models) or result.choices[0].message.content
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import re
@@ -155,6 +157,28 @@ class CloudflareClient:
                 "Chat model returned no answer text (a reasoning model may have spent max_tokens on reasoning)."
             )
         return _THINK_BLOCK.sub("", text).strip()
+
+    async def generate_image(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        steps: int = 8,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ) -> bytes:
+        """Text-to-image (flux-1-schnell): {"prompt", "steps"} -> result.image
+        as a base64 JPEG. Returns the decoded image bytes. The live schema
+        rejects any other property (e.g. "seed", despite the docs example)."""
+        payload: dict = {"prompt": prompt[:2048], "steps": steps}
+        result = await self.run(model, payload, timeout=timeout, max_retries=max_retries)
+        image_b64 = result.get("image")
+        if not isinstance(image_b64, str) or not image_b64:
+            raise CloudflareError("Image model returned no image.")
+        try:
+            return base64.b64decode(image_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise CloudflareError("Image model returned invalid base64.") from exc
 
     @staticmethod
     def _parse_result(response: httpx.Response) -> dict:

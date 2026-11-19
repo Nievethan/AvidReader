@@ -152,6 +152,10 @@ class ApiClient {
 
   Uri _uri(String path) => Uri.parse('$baseUrl$path');
 
+  /// Absolute URL for a backend-relative path such as a character's
+  /// `portrait_url`.
+  String absoluteUrl(String path) => '$baseUrl$path';
+
   dynamic _decode(http.Response res) {
     if (res.statusCode >= 200 && res.statusCode < 300) {
       if (res.body.isEmpty) return null;

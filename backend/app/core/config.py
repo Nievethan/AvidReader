@@ -28,6 +28,10 @@ DEFAULT_EMBEDDING_DIMENSION = 768
 DEFAULT_TEXT_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"
 DEFAULT_QDRANT_LOCAL_PATH = BACKEND_ROOT / "data" / "qdrant"
 DEFAULT_EXTRACTED_DIR = BACKEND_ROOT / "data" / "extracted"
+# Cloudflare-hosted text-to-image model for character portraits; runs on the
+# Workers AI free allowance (~96 neurons per 1024x1024 portrait at 8 steps).
+DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+DEFAULT_PORTRAITS_DIR = BACKEND_ROOT / "data" / "portraits"
 
 
 def _split_csv(value: str) -> list[str]:
@@ -110,6 +114,14 @@ class Settings:
     character_map_batch_chars: int = 60_000
     character_map_max_batches: int = 6
 
+    # Character portraits: generated once per character (on the first
+    # "Update" that finds them) and then reused forever.
+    cloudflare_image_model: str = DEFAULT_IMAGE_MODEL
+    portraits_dir: Path = DEFAULT_PORTRAITS_DIR
+    portrait_steps: int = 8  # flux-1-schnell maximum
+    portrait_concurrency: int = 2
+    portrait_timeout_seconds: float = 60.0
+
     @property
     def is_local(self) -> bool:
         return self.app_env == "local"
@@ -120,6 +132,7 @@ def get_settings() -> Settings:
     uploads_dir_raw = os.environ.get("UPLOADS_DIR")
     cors_raw = os.environ.get("BACKEND_CORS_ORIGINS")
     extracted_raw = os.environ.get("EXTRACTED_DIR")
+    portraits_raw = os.environ.get("PORTRAITS_DIR")
 
     return Settings(
         app_env=os.environ.get("APP_ENV", "local"),
@@ -158,4 +171,9 @@ def get_settings() -> Settings:
         character_map_timeout_seconds=float(os.environ.get("CHARACTER_MAP_TIMEOUT_SECONDS", "45")),
         character_map_batch_chars=max(5_000, int(os.environ.get("CHARACTER_MAP_BATCH_CHARS", "60000"))),
         character_map_max_batches=max(1, int(os.environ.get("CHARACTER_MAP_MAX_BATCHES", "6"))),
+        cloudflare_image_model=_model_id(os.environ.get("CLOUDFLARE_IMAGE_MODEL"), DEFAULT_IMAGE_MODEL),
+        portraits_dir=Path(portraits_raw) if portraits_raw else DEFAULT_PORTRAITS_DIR,
+        portrait_steps=max(1, min(8, int(os.environ.get("PORTRAIT_STEPS", "8")))),
+        portrait_concurrency=max(1, int(os.environ.get("PORTRAIT_CONCURRENCY", "2"))),
+        portrait_timeout_seconds=float(os.environ.get("PORTRAIT_TIMEOUT_SECONDS", "60")),
     )
