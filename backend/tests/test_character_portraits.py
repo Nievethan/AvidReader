@@ -23,19 +23,27 @@ CH1 = (
     "Mr. Dursley was a big, beefy man. Mrs. Dursley was thin and blonde. "
     "Their son Dudley was a large boy. Harry was small and skinny with untidy black hair."
 )
-CH5 = CH1 + " Hagrid was a giant of a man with a wild tangled beard."
+CH5 = "Later, Harry and Dudley met Hagrid, a giant of a man with a wild tangled beard."
 
 
-def _passage(text: str) -> RetrievedPassage:
-    return RetrievedPassage(book_id="b", chunk_id="c1", text=text, source_location="page 1", order_index=0)
+def _passage(text: str, index: int = 0) -> RetrievedPassage:
+    return RetrievedPassage(
+        book_id="b", chunk_id=f"c{index + 1}", text=text, source_location=f"page {index + 1}", order_index=index
+    )
 
 
 class _Retrieval:
+    """Pages read so far. Each Update only analyzes pages added since the
+    last one, so "reading on" means appending a new page via read_more()."""
+
     def __init__(self):
-        self.text = CH1
+        self.pages = [CH1]
+
+    def read_more(self, text: str) -> None:
+        self.pages.append(text)
 
     async def list_chunks(self, book_id, boundary, last_n=None):
-        return [_passage(self.text)]
+        return [_passage(text, i) for i, text in enumerate(self.pages)]
 
     async def retrieve(self, *args, **kwargs):
         raise NotImplementedError
@@ -123,7 +131,7 @@ def test_later_update_reuses_existing_portraits_and_only_generates_new_character
     assert len(generator.prompts) == 2
 
     # Reader moves on; a later chapter introduces Hagrid and describes Harry more.
-    retrieval.text = CH5
+    retrieval.read_more(CH5)
     chat.characters = [
         _char("Harry", "a skinny boy with a lightning scar and round glasses"),
         _char("Dudley", "a large boy"),
@@ -143,22 +151,25 @@ def test_name_variant_reuses_the_same_portrait(env):
     client, book_id, retrieval, chat, generator = env
     chat.characters = [_char("Dudley", "a large boy")]
     _update(client, book_id)
-    retrieval.text = CH1 + " Dudley Dursley kicked his mother all the way down the street."
+    retrieval.read_more("Dudley Dursley kicked his mother all the way down the street.")
     chat.characters = [_char("Dudley Dursley", "a large boy")]
     _update(client, book_id)
     assert len(generator.prompts) == 1
     node = _nodes(client, book_id)["Dudley Dursley"]
-    assert node["id"] == "char_dudley_dursley"
+    # The character map itself now merges the variant into the existing
+    # character and keeps its id; either way it must be the same portrait.
+    assert node["id"] in {"char_dudley", "char_dudley_dursley"}
     assert node["portrait_status"] == "ready"
     assert client.get(node["portrait_url"]).status_code == 200  # alias id resolves
 
 
 def test_mr_and_mrs_never_share_a_portrait_and_ambiguous_name_gets_its_own(env):
-    client, book_id, _, chat, generator = env
+    client, book_id, retrieval, chat, generator = env
     chat.characters = [_char("Mr. Dursley", "a big man"), _char("Mrs. Dursley", "a thin woman")]
     _update(client, book_id)
     assert len(generator.prompts) == 2
 
+    retrieval.read_more("A Dursley neighbour peered over the hedge.")
     chat.characters = [_char("Dursley", "someone")]  # matches both -> don't guess
     _update(client, book_id)
     assert len(generator.prompts) == 3

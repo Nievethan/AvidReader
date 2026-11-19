@@ -1,3 +1,152 @@
+# Changes: incremental character map (fixes long books)
+
+Owner: Umer. Branch: `Path-Fix` (built on `main`).
+
+## Summary
+
+On long books the character map broke after roughly page 55–60. Every
+**Update** sent *everything read so far* to Qwen3 in one request, and Qwen3's
+context window is 32,768 tokens, shared by the prompt **and** the reply.
+Example: an 800-page novel read to page 74 needed ~41,900 tokens, so Cloudflare
+answered `413 ... exceeded this model context window limit`. The screen then
+showed the misleading placeholder "Character extraction isn't connected yet
+(Gitae's work)".
+
+**Update is now incremental.** Each Update only sends pages not analyzed yet,
+in batches that fit the context window, and merges the result into the saved
+map:
+
+| Reader | Before | Now |
+|---|---|---|
+| First Update at page 150 | 1 request with all 150 pages, fails with 413 | ~4 batches that fit, merged |
+| Page 150 → 160, Update | Re-sends pages 1–160, fails | Sends **only pages 151–160** |
+| Map between Updates | Rebuilt from scratch (characters could vanish) | Grows: kept, updated, added |
+
+**Live-verified on the same 800-page novel** (real Cloudflare credentials):
+- Read to page 55: `200` in ~25 s, 3 batches, 18 characters, 11 relationships.
+  Before this change the same request failed with 413.
+- Read on to page ~100: only the new pages were sent (2 requests, no
+  re-reading). The map grew to 27 characters and 18 relationships.
+
+## How it works
+
+`LLMCharacterGraphProvider.get_graph()` in `app/integrations/character_graph.py`:
+
+1. **Progress is saved.** `character_graph_cache.processed_through_order` stores
+   the `order_index` of the last chunk analyzed. The next Update only takes
+   chunks after it.
+2. **Text is batched to fit.** New chunks are grouped into batches of at most
+   `CHARACTER_MAP_BATCH_CHARS` (default 60,000 chars ≈ 20k tokens at a
+   conservative ~3 chars/token). That leaves room for instructions and the
+   4k-token reply. A single oversized chunk is truncated, not dropped.
+3. **Results are merged** (`merge_graph`):
+   - same id → update description/role, keep first-seen
+   - an unambiguous name variant ("Dudley" → "Dudley Dursley") → merged into the
+     existing character, edges remapped
+   - ambiguous names stay separate ("Dursley" vs Mr./Mrs. Dursley; "Jon" when
+     there's a Jon Snow *and* a Jon Arryn)
+   - relationships are unioned
+4. **Known characters are listed in the prompt.** Each batch's prompt names the
+   characters already known, so the model reuses exact names. A relationship in
+   new pages may point at a character from earlier pages (`_normalize(...,
+   known_nodes=...)`).
+5. **One Update does at most `CHARACTER_MAP_MAX_BATCHES` batches** (default 6,
+   ~200 pages). After that it saves progress and returns "Analyzed through page
+   X so far. Tap Update again to continue." The map label shows where it got
+   to, not the reader's position.
+6. **Reading backwards rebuilds.** If the reader moves back before what was
+   analyzed, the map is rebuilt up to the new position, so nothing beyond it
+   can leak (spoiler safety).
+7. **Old saved maps** (`processed_through_order` is NULL) are rebuilt once on
+   the next Update, then work incrementally.
+
+## Malformed model JSON (found in live testing at page ~100)
+
+Novels are full of dialogue. Qwen3 sometimes copied a quote into an evidence
+field without escaping it (`"He said "go" and left"`), which broke the whole
+reply (`JSONDecodeError: Expecting ',' delimiter`). Retrying would hit the same
+spot every time, so the map got stuck there. Fixed in three layers:
+
+1. **Prompt:** the model is told to write the book's double quotes as single
+   quotes inside JSON values.
+2. **Repair:** `_repair_json()` escapes inner quotes and removes trailing
+   commas before parsing gives up.
+3. **Split and retry:** if a reply is still unparseable, that batch is split in
+   half and retried (up to 2 levels). A small piece that still fails is skipped
+   and reported ("…couldn't read N short section(s) (page X), so they were
+   skipped"), so one bad reply can never block the map.
+
+Errors from the AI service itself (network, rate limit, 5xx) still stop the
+Update. Work done so far is saved, and the next Update resumes from there.
+
+## Honest messages instead of the placeholder
+
+| Situation | Message (`RelationshipsResponse.message`) |
+|---|---|
+| No Cloudflare credentials | "Character extraction needs an AI model. Add Cloudflare credentials…" |
+| No text yet / book still processing | "Nothing to analyze yet -- read a few pages first…" |
+| AI error, no saved map | "Couldn't analyze the new pages… Tap Update to try again." |
+| AI error, map already saved | The saved map is still returned, plus the same message |
+| Stopped at the batch cap | "Analyzed through page X so far. Tap Update again to continue." |
+
+The Flutter snackbar after Update now shows the backend's `message` when there
+is one (`visualize_screen.dart`).
+
+## Also fixed
+
+The extraction prompt's example JSON used real Harry Potter content ("a young
+wizard", "brave", "Hagrid brought Harry his letter"). The model was copying it
+into results as if it came from the book (seen live as Harry's description
+"a young wizard Traits: brave."). The example now uses `<placeholders>` only.
+
+## Files
+
+- `backend/app/integrations/character_graph.py`: incremental + batched
+  extraction, `merge_graph`, `split_into_batches`, `_repair_json`,
+  split-and-retry, messages, placeholder example
+- `backend/app/integrations/interfaces.py`:
+  - `GraphResult` gains `message`, `processed_through_order`,
+    `processed_through_label`, `complete`
+  - `CharacterGraphProvider.get_graph()` gains an optional `previous`
+- `backend/app/services/character_map_service.py`: passes the saved map as
+  `previous`, saves progress, keeps the saved map on errors, returns messages
+- `backend/app/models/character_graph.py`: new `processed_through_order` column
+- `backend/app/db/database.py`: `_ADDED_COLUMNS` adds that column to existing
+  databases, and skips tables that don't exist yet
+- `backend/app/repositories/character_graph_repository.py`: `to_graph_result()`;
+  `save()` stores progress
+- `backend/app/core/config.py`, `backend/app/api/deps.py`,
+  `backend/.env.example`: `CHARACTER_MAP_BATCH_CHARS`,
+  `CHARACTER_MAP_MAX_BATCHES`
+- `frontend/lib/screens/visualize_screen.dart`: snackbar shows the backend
+  message
+- Tests:
+  - new `backend/tests/test_character_map_incremental.py` (15 tests: only new
+    pages sent, merge, batching, batch cap/resume, AI error mid-way, first
+    failure, reading backwards, legacy rebuild, name-variant merge,
+    Mr./Mrs. separation, JSON repair, split-and-retry, no stuck progress)
+  - `backend/tests/test_character_map.py`: the offline test now expects the
+    honest message
+
+Backend suite: **232 passed**.
+
+## Known limitations
+
+- **The first Update deep into a long book can take a while.** It's capped at
+  6 batches (~200 pages, ~1–2 min); beyond that the reader taps Update again.
+- **Ambiguous short names stay separate.** "Jon" and "Jon Snow" can appear as
+  two characters when "Jon" could also be Jon Arryn. This is deliberate: the
+  merge never guesses.
+- **Skipped sections aren't retried.** A section skipped for unparseable
+  output is not tried again on later Updates; the message tells the reader
+  which page it was.
+- **Merging with `Image-Generation` (character portraits)** will conflict in
+  `character_graph.py`, `config.py`, `deps.py` and `.env.example`. Keep both
+  sides: portraits add the `appearance` field, this branch changes how
+  extraction runs.
+
+---
+
 # Changes: AI character portraits (Visualize → Characters)
 
 Owner: Umer. Branch: `Image-Generation`. Full design: `docs/CHARACTER_PORTRAITS_PLAN.md`.
