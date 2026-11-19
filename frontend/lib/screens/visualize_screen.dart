@@ -82,10 +82,13 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          // The backend's message wins: it explains partial progress
+          // ("Analyzed through page 120 so far…") or a real error.
           content: Text(
-            res.isReady && res.nodes.isNotEmpty
-                ? 'Extracted ${res.nodes.length} characters & ${res.edges.length} relationships!'
-                : (res.message ?? 'Extraction complete.'),
+            res.message ??
+                (res.isReady && res.nodes.isNotEmpty
+                    ? 'Extracted ${res.nodes.length} characters & ${res.edges.length} relationships!'
+                    : 'Extraction complete.'),
           ),
         ),
       );

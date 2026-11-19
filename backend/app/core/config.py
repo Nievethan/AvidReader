@@ -104,6 +104,11 @@ class Settings:
     # read so far, cached until the reader asks to regenerate it.
     character_map_max_tokens: int = 4000
     character_map_timeout_seconds: float = 45.0
+    # Each Update sends only text not analyzed yet, in batches of at most
+    # this many characters (~3 chars/token: 60k ~= 20k tokens, fits Qwen3's
+    # 32k context with the reply), and at most this many batches per click.
+    character_map_batch_chars: int = 60_000
+    character_map_max_batches: int = 6
 
     @property
     def is_local(self) -> bool:
@@ -151,4 +156,6 @@ def get_settings() -> Settings:
         history_max_messages=int(os.environ.get("HISTORY_MAX_MESSAGES", "6")),
         character_map_max_tokens=int(os.environ.get("CHARACTER_MAP_MAX_TOKENS", "4000")),
         character_map_timeout_seconds=float(os.environ.get("CHARACTER_MAP_TIMEOUT_SECONDS", "45")),
+        character_map_batch_chars=max(5_000, int(os.environ.get("CHARACTER_MAP_BATCH_CHARS", "60000"))),
+        character_map_max_batches=max(1, int(os.environ.get("CHARACTER_MAP_MAX_BATCHES", "6"))),
     )

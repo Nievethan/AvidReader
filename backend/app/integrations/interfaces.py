@@ -86,10 +86,19 @@ class GeneratedAnswer:
 @dataclass(frozen=True)
 class GraphResult:
     book_id: str
-    status: str  # "not_available" | "ready"
+    status: str  # "not_available" | "ready" | "error"
     nodes: list[dict] = field(default_factory=list)
     edges: list[dict] = field(default_factory=list)
     source: str = "none"  # "none" | "fixture" | "extracted"
+    # Human-readable note for the reader (offline, partial progress, error).
+    message: str | None = None
+    # order_index of the last chunk analyzed: the next Update starts after it.
+    processed_through_order: int | None = None
+    # Where analysis stopped (e.g. "page 112") when it didn't reach the boundary.
+    processed_through_label: str | None = None
+    # False when this Update stopped before the reader's boundary
+    # (batch cap reached or an AI error); the next Update continues.
+    complete: bool = True
 
 
 # ---- Provider protocols ----------------------------------------------------
@@ -131,4 +140,9 @@ class AnswerProvider(Protocol):
 class CharacterGraphProvider(Protocol):
     """Owned by Gitae. Produces character/relationship graphs within a spoiler boundary."""
 
-    async def get_graph(self, book_id: str, boundary: ReadingBoundary) -> GraphResult: ...
+    async def get_graph(
+        self, book_id: str, boundary: ReadingBoundary, previous: GraphResult | None = None
+    ) -> GraphResult:
+        """`previous` is the saved map from the last Update; implementations
+        may extend it incrementally instead of re-reading everything."""
+        ...
