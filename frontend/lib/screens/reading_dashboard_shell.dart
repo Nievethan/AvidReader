@@ -17,13 +17,18 @@ class ReadingDashboardShell extends StatefulWidget {
 
 class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   int _selectedIndex = 0;
+  // Which dashboard-level tab is showing while _selectedIndex == 0: 0 =
+  // Library (book list), 1 = Reading Journey (Achievements + Reading Log).
+  // A separate index because these are a different nav bar from the
+  // per-book tabs, not additional entries in that one.
+  int _dashboardTabIndex = 0;
 
   List<BookItem> _books = [];
   String? _activeBookId;
   bool _loading = true;
   bool _uploading = false;
   String? _error;
-  Timer? _ingestionPollTimer;
+  final Map<String, Timer> _pollTimers = {};
 
   BookItem? get _activeBook {
     if (_books.isEmpty) return null;
@@ -41,10 +46,15 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
 
   @override
   void dispose() {
-    _ingestionPollTimer?.cancel();
+    for (final timer in _pollTimers.values) {
+      timer.cancel();
+    }
     super.dispose();
   }
 
+  // Covers every book still "processing", not just the one just uploaded:
+  // otherwise a refresh (or a second session) while a book is mid-ingestion
+  // leaves its Library badge stuck forever since nothing restarts polling.
   Future<void> _loadBooks() async {
     setState(() {
       _loading = true;
@@ -56,6 +66,12 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
         _books = apiBooks.map(BookItem.fromApi).toList();
         _loading = false;
       });
+      for (final book in _books) {
+        if (book.processingStatus == 'processing' &&
+            !_pollTimers.containsKey(book.id)) {
+          _pollIngestion(book.id);
+        }
+      }
     } on ApiException catch (e) {
       setState(() {
         _error = e.message;
@@ -167,20 +183,23 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
 
   // The book list isn't re-fetched on its own once ingestion finishes in the
   // background, so without this the Library/Reader keep showing
-  // "processing" forever even after the real status has moved on.
+  // "processing" forever even after the real status has moved on. Keyed by
+  // book id so more than one book can be polled at once.
   void _pollIngestion(String bookId) {
-    _ingestionPollTimer?.cancel();
-    _ingestionPollTimer = Timer(const Duration(seconds: 2), () async {
+    _pollTimers[bookId]?.cancel();
+    _pollTimers[bookId] = Timer(const Duration(seconds: 2), () async {
       try {
         final status = await api.getIngestionStatus(bookId);
         if (!mounted) return;
         if (status.status == 'processing') {
           _pollIngestion(bookId);
         } else {
+          _pollTimers.remove(bookId);
           await _loadBooks();
         }
       } on ApiException {
         // Give up quietly; the user can still pull-to-refresh via onRetry.
+        _pollTimers.remove(bookId);
       }
     });
   }
@@ -203,14 +222,14 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
     }
   }
 
-  Future<void> _changePage(int delta) async {
+  Future<void> _setPage(int targetPage) async {
     final book = _activeBook;
     if (book == null) return;
     final total = book.totalPages;
     // currentPage is 0-based, and /content only has pages 1..totalPages,
     // so the last valid 0-based page is (totalPages - 1).
     final maxPage = (total != null && total > 0) ? total - 1 : 1 << 30;
-    final newPage = (book.currentPage + delta).clamp(0, maxPage).toInt();
+    final newPage = targetPage.clamp(0, maxPage).toInt();
     final percent = (total != null && total > 0) ? newPage / total * 100 : null;
 
     // Optimistic update so the UI feels instant; reverted on failure.
@@ -236,9 +255,22 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
     }
   }
 
+  Future<void> _changePage(int delta) async {
+    final book = _activeBook;
+    if (book == null) return;
+    await _setPage(book.currentPage + delta);
+  }
+
+  // Jumps straight to a 0-based page instead of stepping by one, so the
+  // reader isn't stuck clicking "Next" dozens of times to skip ahead.
+  Future<void> _goToPage(int page) => _setPage(page);
+
   void _navigateToTab(int index) {
     setState(() {
       _selectedIndex = index;
+      // Leaving book mode always lands back on the book list, not wherever
+      // the dashboard tab happened to be left on.
+      if (index == 0) _dashboardTabIndex = 0;
     });
   }
 
@@ -276,17 +308,23 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
   @override
   Widget build(BuildContext context) {
     final List<Widget> screens = [
-      LibraryScreen(
-        activeBook: _activeBook,
-        libraryBooks: _books,
-        isLoading: _loading,
-        isUploading: _uploading,
-        error: _error,
-        onRetry: _loadBooks,
-        onUploadTap: _uploadBook,
-        onBookTap: _selectBook,
-        onResumeTap: () => _navigateToTab(1),
-        onDeleteTap: _deleteBook,
+      IndexedStack(
+        index: _dashboardTabIndex,
+        children: [
+          LibraryScreen(
+            activeBook: _activeBook,
+            libraryBooks: _books,
+            isLoading: _loading,
+            isUploading: _uploading,
+            error: _error,
+            onRetry: _loadBooks,
+            onUploadTap: _uploadBook,
+            onBookTap: _selectBook,
+            onResumeTap: () => _navigateToTab(1),
+            onDeleteTap: _deleteBook,
+          ),
+          const ReadingJourneyScreen(),
+        ],
       ),
       _needsBook(
         (book) => ReaderScreen(
@@ -295,11 +333,21 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
           onAskAiTap: () => _navigateToTab(2),
           onVisualizeTap: () => _navigateToTab(3),
           onPageChange: _changePage,
+          onGoToPage: _goToPage,
         ),
       ),
-      _needsBook((book) => AskAiScreen(book: book)),
-      _needsBook((book) => VisualizeScreen(book: book)),
-      _needsBook((book) => ProgressScreen(book: book)),
+      _needsBook((book) => AskAiScreen(
+            book: book,
+            onBackToReaderTap: () => _navigateToTab(1),
+          )),
+      _needsBook((book) => VisualizeScreen(
+            book: book,
+            onBackToReaderTap: () => _navigateToTab(1),
+          )),
+      _needsBook((book) => ProgressScreen(
+            book: book,
+            onBackToReaderTap: () => _navigateToTab(1),
+          )),
     ];
 
     return Scaffold(
@@ -311,17 +359,90 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
           ),
         ),
       ),
-      bottomNavigationBar: _buildBottomNavBar(),
+      // Two different nav bars, never mixed into one list: the dashboard
+      // bar (Library / Reading Journey) while no book is open, and the
+      // book bar (Reader / Ask AI / Visualize / Progress + a Library exit)
+      // once one is. Keeping them separate is the whole point -- Library
+      // was never a peer of the book-view tabs, and Reading Journey is
+      // cross-book data, so neither belongs mixed into the other bar.
+      bottomNavigationBar:
+          _selectedIndex == 0 ? _buildDashboardNavBar() : _buildBookNavBar(),
     );
   }
 
-  Widget _buildBottomNavBar() {
-    const items = [
+  Widget _buildDashboardNavBar() {
+    const dashboardTabs = [
       (
         icon: Icons.local_library_outlined,
         activeIcon: Icons.local_library,
         label: 'Library',
       ),
+      (
+        icon: Icons.emoji_events_outlined,
+        activeIcon: Icons.emoji_events,
+        label: 'Journey',
+      ),
+    ];
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: ClassicLitTheme.linenCard,
+        border: Border(
+          top: BorderSide(color: ClassicLitTheme.deckleBorder, width: 1.2),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 62,
+          child: Row(
+            children: List.generate(dashboardTabs.length, (i) {
+              final item = dashboardTabs[i];
+              final isSelected = _dashboardTabIndex == i;
+              return Expanded(
+                child: InkWell(
+                  onTap: () => setState(() => _dashboardTabIndex = i),
+                  child: Container(
+                    color: isSelected
+                        ? ClassicLitTheme.oxbloodPrimary.withValues(alpha: 0.10)
+                        : Colors.transparent,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          isSelected ? item.activeIcon : item.icon,
+                          size: 20,
+                          color: isSelected
+                              ? ClassicLitTheme.oxbloodPrimary
+                              : ClassicLitTheme.inkSecondary,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          item.label,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: isSelected
+                                ? ClassicLitTheme.oxbloodPrimary
+                                : ClassicLitTheme.inkSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBookNavBar() {
+    const bookViewTabs = [
       (
         icon: Icons.menu_book_outlined,
         activeIcon: Icons.menu_book,
@@ -356,45 +477,85 @@ class _ReadingDashboardShellState extends State<ReadingDashboardShell> {
         child: SizedBox(
           height: 62,
           child: Row(
-            children: List.generate(items.length, (index) {
-              final item = items[index];
-              final isSelected = _selectedIndex == index;
-              return Expanded(
-                child: InkWell(
-                  onTap: () => _navigateToTab(index),
-                  child: Container(
-                    color: isSelected
-                        ? ClassicLitTheme.oxbloodPrimary.withValues(alpha: 0.10)
-                        : Colors.transparent,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          isSelected ? item.activeIcon : item.icon,
-                          size: 20,
-                          color: isSelected
-                              ? ClassicLitTheme.oxbloodPrimary
-                              : ClassicLitTheme.inkSecondary,
+            children: [
+              // Exits book mode entirely -- set apart from the tabs below
+              // (divider, back-style icon) so it doesn't read as "just
+              // another view of this book".
+              InkWell(
+                onTap: () => _navigateToTab(0),
+                child: Container(
+                  width: 68,
+                  height: double.infinity,
+                  decoration: const BoxDecoration(
+                    border: Border(
+                      right: BorderSide(
+                        color: ClassicLitTheme.deckleBorder,
+                        width: 1.2,
+                      ),
+                    ),
+                  ),
+                  child: const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.arrow_back_ios_new,
+                        size: 16,
+                        color: ClassicLitTheme.oxbloodPrimary,
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Library',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: ClassicLitTheme.oxbloodPrimary,
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          item.label,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: isSelected
-                                ? FontWeight.w700
-                                : FontWeight.w500,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              ...List.generate(bookViewTabs.length, (i) {
+                final tabIndex = i + 1; // tabs 1-4; 0 is Library
+                final item = bookViewTabs[i];
+                final isSelected = _selectedIndex == tabIndex;
+                return Expanded(
+                  child: InkWell(
+                    onTap: () => _navigateToTab(tabIndex),
+                    child: Container(
+                      color: isSelected
+                          ? ClassicLitTheme.oxbloodPrimary.withValues(alpha: 0.10)
+                          : Colors.transparent,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            isSelected ? item.activeIcon : item.icon,
+                            size: 20,
                             color: isSelected
                                 ? ClassicLitTheme.oxbloodPrimary
                                 : ClassicLitTheme.inkSecondary,
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 4),
+                          Text(
+                            item.label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: isSelected
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: isSelected
+                                  ? ClassicLitTheme.oxbloodPrimary
+                                  : ClassicLitTheme.inkSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            }),
+                );
+              }),
+            ],
           ),
         ),
       ),

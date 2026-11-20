@@ -10,21 +10,24 @@ import '../widgets/vintage_progress_bar.dart';
 
 class ProgressScreen extends StatefulWidget {
   final BookItem book;
+  final VoidCallback onBackToReaderTap;
 
-  const ProgressScreen({super.key, required this.book});
+  const ProgressScreen({
+    super.key,
+    required this.book,
+    required this.onBackToReaderTap,
+  });
 
   @override
   State<ProgressScreen> createState() => _ProgressScreenState();
 }
 
 class _ProgressScreenState extends State<ProgressScreen> {
-  int _selectedTabIndex = 0; // 0: Overview, 1: Word Wall, 2: Achievements, 3: Reading Log
+  int _selectedTabIndex = 0; // 0: Overview, 1: Word Wall
 
   bool _loading = true;
   String? _error;
 
-  ReadingLogResult? _readingLog;
-  AchievementsResult? _achievements;
   List<WordWallEntry> _words = [];
 
   @override
@@ -47,16 +50,10 @@ class _ProgressScreenState extends State<ProgressScreen> {
       _error = null;
     });
     try {
-      final results = await Future.wait([
-        api.getReadingLog(),
-        api.getAchievements(),
-        api.listWords(widget.book.id),
-      ]);
+      final words = await api.listWords(widget.book.id);
       if (!mounted) return;
       setState(() {
-        _readingLog = results[0] as ReadingLogResult;
-        _achievements = results[1] as AchievementsResult;
-        _words = results[2] as List<WordWallEntry>;
+        _words = words;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -207,34 +204,45 @@ class _ProgressScreenState extends State<ProgressScreen> {
             ),
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 'My Progress',
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Text(
-                      widget.book.title,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: ClassicLitTheme.inkSecondary,
+              // Expanded so the Row below actually gets a bounded width --
+              // without it, Flexible+ellipsis on the title never kicks in
+              // and a long filename overflows the header.
+              Expanded(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.book.title,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: ClassicLitTheme.inkSecondary,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
-                    tooltip: 'Refresh',
-                    onPressed: _loadAll,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    IconButton(
+                      icon: const Icon(Icons.menu_book_outlined, size: 18),
+                      tooltip: 'Back to Reader',
+                      onPressed: widget.onBackToReaderTap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh, size: 18),
+                      tooltip: 'Refresh',
+                      onPressed: _loadAll,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -274,12 +282,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
                       padding: const EdgeInsets.all(16),
                       children: [
                         FilterPillRow(
-                          options: const [
-                            'Overview',
-                            'Word Wall',
-                            'Achievements',
-                            'Reading Log',
-                          ],
+                          options: const ['Overview', 'Word Wall'],
                           selectedIndex: _selectedTabIndex,
                           onSelected: (i) =>
                               setState(() => _selectedTabIndex = i),
@@ -297,24 +300,14 @@ class _ProgressScreenState extends State<ProgressScreen> {
     switch (_selectedTabIndex) {
       case 1:
         return _buildWordWallTab();
-      case 2:
-        return _buildAchievementsTab();
-      case 3:
-        return _buildReadingLogTab();
       default:
         return _buildOverviewTab();
     }
   }
 
   List<Widget> _buildOverviewTab() {
-    final streak = _readingLog?.currentStreak ?? 0;
-    final longestStreak = _readingLog?.longestStreak ?? 0;
-    final unlockedAchievements =
-        _achievements?.achievements.where((a) => a.unlocked).length ?? 0;
-    final totalAchievements = _achievements?.achievements.length ?? 6;
-
     return [
-      // Card 1: Reading Progress & Streak
+      // Card 1: Reading Progress
       PaperCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -342,36 +335,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
             const SizedBox(height: 8),
             VintageProgressBar(value: widget.book.progress),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${widget.book.progressPercent}% completed',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: ClassicLitTheme.inkSecondary,
-                  ),
-                ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.local_fire_department,
-                      size: 16,
-                      color: ClassicLitTheme.antiqueGold,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '$streak day streak (best: $longestStreak)',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: ClassicLitTheme.inkPrimary,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+            Text(
+              '${widget.book.progressPercent}% completed',
+              style: const TextStyle(
+                fontSize: 12,
+                color: ClassicLitTheme.inkSecondary,
+              ),
             ),
           ],
         ),
@@ -430,137 +399,6 @@ class _ProgressScreenState extends State<ProgressScreen> {
                   );
                 }).toList(),
               ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 14),
-
-      // Card 3: Achievements Progress
-      PaperCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Achievements ($unlockedAchievements / $totalAchievements)',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => setState(() => _selectedTabIndex = 2),
-                  child: const Text('View All ›'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            VintageProgressBar(
-              value: totalAchievements > 0
-                  ? unlockedAchievements / totalAchievements
-                  : 0,
-              fillColor: ClassicLitTheme.antiqueGold,
-            ),
-            const SizedBox(height: 10),
-            ...(_achievements?.achievements ?? []).take(3).map((ach) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Icon(
-                      ach.unlocked
-                          ? Icons.check_circle
-                          : Icons.radio_button_unchecked,
-                      size: 16,
-                      color: ach.unlocked
-                          ? ClassicLitTheme.libraryGreen
-                          : ClassicLitTheme.inkSecondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        ach.label,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: ach.unlocked
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: ach.unlocked
-                              ? ClassicLitTheme.inkPrimary
-                              : ClassicLitTheme.inkSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-      const SizedBox(height: 14),
-
-      // Card 4: Recent Reading Log Summary
-      PaperCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Recent Reading Log',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => setState(() => _selectedTabIndex = 3),
-                  child: const Text('View All ›'),
-                ),
-              ],
-            ),
-            if ((_readingLog?.days ?? []).isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  'No reading sessions logged yet. Your reading progress automatically logs daily activity.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: ClassicLitTheme.inkSecondary,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              )
-            else
-              ...(_readingLog?.days ?? []).take(3).map((d) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        d.date,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: ClassicLitTheme.oxbloodPrimary,
-                        ),
-                      ),
-                      Text(
-                        '${d.bookTitle} (p. ${d.currentPage ?? 0})',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: ClassicLitTheme.inkSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
           ],
         ),
       ),
@@ -691,230 +529,6 @@ class _ProgressScreenState extends State<ProgressScreen> {
                       ),
                     ),
                   ],
-                ],
-              ),
-            ),
-          );
-        }),
-    ];
-  }
-
-  List<Widget> _buildAchievementsTab() {
-    final achievements = _achievements?.achievements ?? [];
-    final currentStreak = _achievements?.currentStreak ?? 0;
-    final longestStreak = _achievements?.longestStreak ?? 0;
-
-    return [
-      PaperCard(
-        backgroundColor: ClassicLitTheme.goldHighlightWash,
-        child: Row(
-          children: [
-            const Icon(
-              Icons.emoji_events_outlined,
-              size: 32,
-              color: ClassicLitTheme.oxbloodPrimary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Literary Milestones',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                      color: ClassicLitTheme.inkPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Current Streak: $currentStreak days • Longest: $longestStreak days',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: ClassicLitTheme.inkSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 14),
-      Text(
-        'ALL ACHIEVEMENTS',
-        style: Theme.of(context).textTheme.labelSmall,
-      ),
-      const SizedBox(height: 10),
-      ...achievements.map((ach) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: PaperCard(
-            backgroundColor: ach.unlocked
-                ? ClassicLitTheme.elevatedPaper
-                : ClassicLitTheme.linenCard.withValues(alpha: 0.6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: ach.unlocked
-                        ? ClassicLitTheme.oxbloodPrimary
-                        : ClassicLitTheme.deckleBorder,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    ach.unlocked ? Icons.military_tech : Icons.lock_outline,
-                    size: 22,
-                    color: ClassicLitTheme.inkOnPrimary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              ach.label,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 13.5,
-                                color: ach.unlocked
-                                    ? ClassicLitTheme.inkPrimary
-                                    : ClassicLitTheme.inkSecondary,
-                              ),
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: ach.unlocked
-                                  ? ClassicLitTheme.libraryGreen.withValues(alpha: 0.15)
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(3),
-                              border: Border.all(
-                                color: ach.unlocked
-                                    ? ClassicLitTheme.libraryGreen
-                                    : ClassicLitTheme.deckleBorder,
-                              ),
-                            ),
-                            child: Text(
-                              ach.unlocked ? 'UNLOCKED' : 'LOCKED',
-                              style: TextStyle(
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w700,
-                                color: ach.unlocked
-                                    ? ClassicLitTheme.libraryGreen
-                                    : ClassicLitTheme.inkSecondary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        ach.description,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: ClassicLitTheme.inkSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }),
-    ];
-  }
-
-  List<Widget> _buildReadingLogTab() {
-    final days = _readingLog?.days ?? [];
-    return [
-      Text(
-        'READING LOG HISTORY',
-        style: Theme.of(context).textTheme.labelSmall,
-      ),
-      const SizedBox(height: 10),
-      if (days.isEmpty)
-        const PaperCard(
-          child: Padding(
-            padding: EdgeInsets.all(20),
-            child: Text(
-              'No reading activity recorded yet. As you turn pages in the Reader, daily progress is saved automatically.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: ClassicLitTheme.inkSecondary,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ),
-        )
-      else
-        ...days.map((entry) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: PaperCard(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.bookTitle,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                          color: ClassicLitTheme.inkPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        entry.currentChapter != null
-                            ? 'Chapter ${entry.currentChapter}'
-                            : 'Page ${entry.currentPage ?? 0}',
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          color: ClassicLitTheme.inkSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: ClassicLitTheme.elevatedPaper,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: ClassicLitTheme.deckleBorder),
-                    ),
-                    child: Text(
-                      entry.date,
-                      style: const TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: ClassicLitTheme.oxbloodPrimary,
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),

@@ -6,6 +6,7 @@ import 'api_client.dart';
 
 export 'screens/reading_dashboard_shell.dart';
 export 'screens/library_screen.dart';
+export 'screens/reading_journey_screen.dart';
 export 'screens/reader_screen.dart';
 export 'screens/ask_ai_screen.dart';
 export 'screens/visualize_screen.dart';

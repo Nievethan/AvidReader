@@ -13,8 +13,13 @@ import '../widgets/vintage_progress_bar.dart';
 
 class VisualizeScreen extends StatefulWidget {
   final BookItem book;
+  final VoidCallback onBackToReaderTap;
 
-  const VisualizeScreen({super.key, required this.book});
+  const VisualizeScreen({
+    super.key,
+    required this.book,
+    required this.onBackToReaderTap,
+  });
 
   @override
   State<VisualizeScreen> createState() => _VisualizeScreenState();
@@ -194,22 +199,36 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Visualize',
-                style: Theme.of(context).textTheme.headlineSmall,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Visualize',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    Text(
+                      widget.book.title,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: ClassicLitTheme.inkSecondary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    'Ch. ${widget.book.currentChapter}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: ClassicLitTheme.inkSecondary,
-                    ),
+                  IconButton(
+                    icon: const Icon(Icons.menu_book_outlined, size: 18),
+                    tooltip: 'Back to Reader',
+                    onPressed: widget.onBackToReaderTap,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 4),
                   InkWell(
                     onTap: _generating ? null : _generateRelationships,
                     borderRadius: BorderRadius.circular(4),
@@ -656,12 +675,41 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
                                 color: ClassicLitTheme.oxbloodPrimary,
                               ),
                               const SizedBox(width: 6),
+                              // Relationship type as its own badge -- same
+                              // treatment as the character role badge above
+                              // -- instead of plain text run together with
+                              // the name.
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: ClassicLitTheme.goldHighlightWash,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: ClassicLitTheme.deckleBorder,
+                                  ),
+                                ),
+                                child: Text(
+                                  (edge.relationship ?? 'connected to')
+                                      .toUpperCase(),
+                                  style: const TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: ClassicLitTheme.oxbloodPrimary,
+                                    letterSpacing: 0.4,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '${edge.relationship ?? "connected to"} ${otherNode.name}',
+                                  otherNode.name,
+                                  overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w700,
-                                    fontSize: 12.5,
+                                    fontSize: 13,
                                     color: ClassicLitTheme.inkPrimary,
                                   ),
                                 ),

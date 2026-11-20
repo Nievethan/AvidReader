@@ -247,6 +247,14 @@ class LibraryScreen extends StatelessWidget {
                     color: ClassicLitTheme.inkSecondary,
                   ),
                 ),
+                if (activeBook.processingStatus != 'failed' &&
+                    activeBook.processingStatus != 'unsupported') ...[
+                  const SizedBox(height: 8),
+                  const LinearProgressIndicator(
+                    color: ClassicLitTheme.oxbloodPrimary,
+                    backgroundColor: ClassicLitTheme.parchmentBg,
+                  ),
+                ],
               ],
             ),
           ),
