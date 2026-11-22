@@ -8,6 +8,7 @@ import '../main.dart';
 import '../models/book_item.dart';
 import '../theme/classic_lit_theme.dart';
 import '../widgets/paper_card.dart';
+import '../widgets/scene_gallery.dart';
 import '../widgets/vintage_progress_bar.dart';
 
 class ReaderScreen extends StatefulWidget {
@@ -165,6 +166,83 @@ class _ReaderScreenState extends State<ReaderScreen> {
     } finally {
       if (mounted) setState(() => _explaining = false);
     }
+  }
+
+  /// Illustrate button: asks the backend for a picture of the page (PDF) or
+  /// chapter (EPUB) on screen and shows it in a dialog. A page illustrated
+  /// before comes back instantly; a new one takes a few seconds to paint.
+  Future<void> _illustratePage() async {
+    final isEpub = widget.book.fileType.toLowerCase() == 'epub';
+    final unit = isEpub ? 'chapter' : 'page';
+    // Same 1-based conversion as _loadContent(): currentPage is 0-based.
+    final position = isEpub
+        ? (widget.book.currentChapter < 1 ? 1 : widget.book.currentChapter)
+        : widget.book.currentPage + 1;
+    final future = api.illustrate(widget.book.id, position);
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ClassicLitTheme.parchmentBg,
+        contentPadding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+        content: SizedBox(
+          width: 360,
+          child: FutureBuilder<SceneResult>(
+            future: future,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(
+                        color: ClassicLitTheme.oxbloodPrimary,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        'Painting this $unit… this takes a few seconds.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                );
+              }
+              if (snap.hasError) {
+                final error = snap.error;
+                return Text(
+                  error is ApiException
+                      ? error.message
+                      : 'Something went wrong. Try again.',
+                  textAlign: TextAlign.center,
+                );
+              }
+              final result = snap.data!;
+              final scene = result.scene;
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (scene != null) SceneCard(scene: scene),
+                    if (result.message != null) ...[
+                      const SizedBox(height: 8),
+                      Text(result.message!, textAlign: TextAlign.center),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showAddWordDialog({String? defaultWord, String? defaultMeaning}) {
@@ -425,6 +503,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
               _buildSelectionActionButton(
                 label: 'Word Wall',
                 onTap: () => _showAddWordDialog(),
+              ),
+              const SizedBox(width: 6),
+              _buildSelectionActionButton(
+                label: 'Illustrate',
+                onTap: (_page?.content ?? '').isEmpty ? () {} : _illustratePage,
               ),
             ],
           ),

@@ -5,10 +5,12 @@ import 'package:http/http.dart' as http;
 
 import 'models/character_map_item.dart';
 import 'models/engagement_item.dart';
+import 'models/scene_item.dart';
 import 'models/word_wall_item.dart';
 
 export 'models/character_map_item.dart';
 export 'models/engagement_item.dart';
+export 'models/scene_item.dart';
 export 'models/word_wall_item.dart';
 
 /// Base URL of the FastAPI backend. Override at run time with:
@@ -253,6 +255,25 @@ class ApiClient {
         );
         return RelationshipsResult.fromJson(
             (data as Map).cast<String, dynamic>());
+      });
+
+  /// Illustrated key moments the reader has already reached (free, cached).
+  Future<ScenesResult> getScenes(String bookId) => _guard(() async {
+        final data = _decode(
+          await _http.get(_uri('/api/v1/books/$bookId/scenes')),
+        );
+        return ScenesResult.fromJson((data as Map).cast<String, dynamic>());
+      });
+
+  /// The reader's Illustrate button. `position` is the 1-based page (PDF)
+  /// or chapter (EPUB). Returns the saved picture if there is one; otherwise
+  /// the backend paints it, which takes a few seconds.
+  Future<SceneResult> illustrate(String bookId, int position) =>
+      _guard(() async {
+        final data = _decode(
+          await _http.post(_uri('/api/v1/books/$bookId/scenes/at/$position')),
+        );
+        return SceneResult.fromJson((data as Map).cast<String, dynamic>());
       });
 
   Future<List<WordWallEntry>> listWords(String bookId) => _guard(() async {

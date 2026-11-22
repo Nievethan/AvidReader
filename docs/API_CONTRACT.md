@@ -414,6 +414,57 @@ Both routes: `404 NOT_FOUND` if the book doesn't exist.
 
 ---
 
+## Scenes (Illustrate button)
+
+The reader's **Illustrate** button asks for a storybook-style picture of the
+page (PDF) or chapter (EPUB) on screen. The chat model picks that page's key
+moment (it must quote the page exactly, or nothing is saved), and the same
+image model as portraits paints it. Each page is illustrated once and
+reused after that. Visualize -> Scenes lists them all.
+
+`position` is **1-based** (page 1 = 1). Note the Flutter reader saves
+`current_page` 0-based, so the scene routes add 1 to a PDF's saved page
+when working out how far the reader has got.
+
+**Spoiler gate:** a position can only be illustrated, listed or served once
+the reader's saved progress has reached it. Moving backwards hides later
+scenes; it doesn't delete them.
+
+### `POST /api/v1/books/{book_id}/scenes/at/{position}`
+
+Synchronous: a new picture takes a few seconds; one made before comes back
+at once with no model call.
+
+```json
+{
+  "book_id": "40fae399-...",
+  "status": "ready",
+  "message": null,
+  "scene": {"id": "p00004", "title": "The Cyclone Lifts the House",
+            "caption": "A huge storm carries the farmhouse into the sky.",
+            "source_location": "page 4", "position": 4, "status": "ready",
+            "image_url": "/api/v1/books/40fae399-.../scenes/p00004/image?v=1763820000"}
+}
+```
+
+`status`: `ready` | `failed` (painting failed; `scene` is returned without
+an image and the next tap repaints it) | `not_available` (no `scene`; the
+`message` says why: offline, not reached yet, blank page, AI error, or no
+moment found). `422` if `position` < 1.
+
+### `GET /api/v1/books/{book_id}/scenes`
+
+The gallery. Free, no model call. `{book_id, status, message, scenes: [scene, ...]}`
+in reading order; `status` is `not_available` with a `message` when no
+scene is visible yet.
+
+### `GET /api/v1/books/{book_id}/scenes/{scene_id}/image`
+
+The JPEG. `404 NOT_FOUND` if it isn't painted or the reader hasn't reached
+that page.
+
+---
+
 ## Reading log and achievements
 
 Both are computed from real data (reading progress updates, chat
@@ -475,8 +526,6 @@ planned table:
 - `GET /api/v1/books/{book_id}/characters` (a separate per-character detail
   view, distinct from the relationships graph above)
 - `POST /api/v1/visualizations`, `/api/v1/study/*`
-- Image/portrait generation (no hook anywhere yet, not even a `not_available`
-  route -- no AI model is connected for this)
 
 Do not build a frontend screen against any of the above until they
 actually exist in this contract.

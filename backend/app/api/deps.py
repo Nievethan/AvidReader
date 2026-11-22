@@ -17,6 +17,7 @@ from app.integrations.portraits import (
 )
 from app.integrations.rag_ingestion import RagIngestionProvider
 from app.integrations.rag_retrieval import RagRetrievalProvider
+from app.integrations.scenes import LLMScenePicker, NotAvailableScenePicker
 from app.rag.chunking import ChunkingConfig
 from app.rag.embeddings import EmbeddingProvider, build_embedding_provider
 from app.rag.extracted_store import ExtractedTextStore
@@ -28,6 +29,7 @@ from app.services.book_service import BookService
 from app.services.portrait_service import PortraitService
 from app.services.progress_service import ProgressService
 from app.services.reading_log_service import ReadingLogService
+from app.services.scene_service import SceneService
 from app.services.word_wall_service import WordWallService
 
 logger = logging.getLogger(__name__)
@@ -162,6 +164,30 @@ def get_portrait_service() -> PortraitService:
 
 
 @lru_cache
+def get_scene_service() -> SceneService:
+    """Scene pictures reuse the character map's chat model settings and the
+    portrait image generator (same Cloudflare client, same image model)."""
+    settings = get_settings()
+    client = get_cloudflare_client()
+    if client is None:
+        picker = NotAvailableScenePicker()
+        retrieval = None
+    else:
+        chat_model = CloudflareChatModel(
+            client, settings.cloudflare_text_model, timeout=settings.character_map_timeout_seconds
+        )
+        picker = LLMScenePicker(chat_model, max_tokens=settings.scene_max_tokens)
+        retrieval = get_retrieval_provider()
+    return SceneService(
+        picker=picker,
+        generator=get_portrait_generator(),
+        retrieval_provider=retrieval,
+        scenes_dir=settings.scenes_dir,
+        max_page_chars=settings.character_map_batch_chars,
+    )
+
+
+@lru_cache
 def get_ai_service() -> AIService:
     settings = get_settings()
     return AIService(
@@ -188,6 +214,7 @@ _CACHED = (
     get_character_graph_provider,
     get_portrait_generator,
     get_portrait_service,
+    get_scene_service,
     get_ai_service,
 )
 
