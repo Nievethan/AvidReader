@@ -32,6 +32,7 @@ DEFAULT_EXTRACTED_DIR = BACKEND_ROOT / "data" / "extracted"
 # Workers AI free allowance (~96 neurons per 1024x1024 portrait at 8 steps).
 DEFAULT_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 DEFAULT_PORTRAITS_DIR = BACKEND_ROOT / "data" / "portraits"
+DEFAULT_SCENES_DIR = BACKEND_ROOT / "data" / "scenes"
 
 
 def _split_csv(value: str) -> list[str]:
@@ -122,6 +123,11 @@ class Settings:
     portrait_concurrency: int = 2
     portrait_timeout_seconds: float = 60.0
 
+    # Scene pictures (reader's "Illustrate" button): the chat model picks the
+    # page's key moment, painted with the same image model as portraits.
+    scenes_dir: Path = DEFAULT_SCENES_DIR
+    scene_max_tokens: int = 1500
+
     @property
     def is_local(self) -> bool:
         return self.app_env == "local"
@@ -133,6 +139,7 @@ def get_settings() -> Settings:
     cors_raw = os.environ.get("BACKEND_CORS_ORIGINS")
     extracted_raw = os.environ.get("EXTRACTED_DIR")
     portraits_raw = os.environ.get("PORTRAITS_DIR")
+    scenes_raw = os.environ.get("SCENES_DIR")
 
     return Settings(
         app_env=os.environ.get("APP_ENV", "local"),
@@ -176,4 +183,6 @@ def get_settings() -> Settings:
         portrait_steps=max(1, min(8, int(os.environ.get("PORTRAIT_STEPS", "8")))),
         portrait_concurrency=max(1, int(os.environ.get("PORTRAIT_CONCURRENCY", "2"))),
         portrait_timeout_seconds=float(os.environ.get("PORTRAIT_TIMEOUT_SECONDS", "60")),
+        scenes_dir=Path(scenes_raw) if scenes_raw else DEFAULT_SCENES_DIR,
+        scene_max_tokens=int(os.environ.get("SCENE_MAX_TOKENS", "1500")),
     )

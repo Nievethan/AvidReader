@@ -9,6 +9,7 @@ import '../theme/classic_lit_theme.dart';
 import '../widgets/character_portrait.dart';
 import '../widgets/filter_pill_row.dart';
 import '../widgets/paper_card.dart';
+import '../widgets/scene_gallery.dart';
 import '../widgets/vintage_progress_bar.dart';
 
 class VisualizeScreen extends StatefulWidget {
@@ -26,6 +27,10 @@ class VisualizeScreen extends StatefulWidget {
 }
 
 class _VisualizeScreenState extends State<VisualizeScreen> {
+  static const _categories = ['Characters', 'Relationships', 'Concept map', 'Scenes'];
+  static const _scenesTab = 3;
+  final _sceneGalleryKey = GlobalKey<SceneGalleryState>();
+
   int _selectedCategoryIndex = 0;
   int _selectedCharacterIndex = 0;
 
@@ -167,6 +172,21 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
     }
   }
 
+  /// The header's Update button acts on whichever tab is open.
+  void _onUpdateTap() {
+    if (_selectedCategoryIndex == _scenesTab) {
+      _sceneGalleryKey.currentState?.reload();
+    } else {
+      _generateRelationships();
+    }
+  }
+
+  Widget _categoryPills() => FilterPillRow(
+        options: _categories,
+        selectedIndex: _selectedCategoryIndex,
+        onSelected: (index) => setState(() => _selectedCategoryIndex = index),
+      );
+
   IconData _iconForRole(String? role) {
     final r = (role ?? '').toLowerCase();
     if (r.contains('protagonist') || r.contains('hero')) {
@@ -230,7 +250,7 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
                   ),
                   const SizedBox(width: 4),
                   InkWell(
-                    onTap: _generating ? null : _generateRelationships,
+                    onTap: _generating ? null : _onUpdateTap,
                     borderRadius: BorderRadius.circular(4),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -321,12 +341,33 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
       );
     }
 
+    if (_selectedCategoryIndex == _scenesTab) {
+      // Scenes don't depend on the character map, so this tab works even
+      // before any characters have been extracted.
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _categoryPills(),
+          const SizedBox(height: 14),
+          SceneGallery(key: _sceneGalleryKey, bookId: widget.book.id),
+        ],
+      );
+    }
+
     final result = _result;
     final nodes = result?.nodes ?? [];
     final edges = result?.edges ?? [];
 
     if (nodes.isEmpty) {
-      return _buildEmptyState(result?.message);
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Align(alignment: Alignment.centerLeft, child: _categoryPills()),
+          ),
+          Expanded(child: _buildEmptyState(result?.message)),
+        ],
+      );
     }
 
     final currentIndex = _selectedCharacterIndex.clamp(0, nodes.length - 1);
@@ -337,12 +378,7 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        FilterPillRow(
-          options: const ['Characters', 'Relationships', 'Concept map'],
-          selectedIndex: _selectedCategoryIndex,
-          onSelected: (index) =>
-              setState(() => _selectedCategoryIndex = index),
-        ),
+        _categoryPills(),
         const SizedBox(height: 14),
 
         if (_generating) ...[
