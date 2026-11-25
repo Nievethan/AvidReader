@@ -21,6 +21,7 @@ def to_graph_result(cache: CharacterGraphCache) -> GraphResult:
         edges=json.loads(cache.edges_json),
         source="extracted",
         processed_through_order=cache.processed_through_order,
+        setting=cache.setting,
     )
 
 
@@ -35,6 +36,7 @@ def save(db: Session, book_id: str, result: GraphResult, *, boundary_label: str 
             edges_json=edges_json,
             boundary_label=boundary_label,
             processed_through_order=result.processed_through_order,
+            setting=result.setting,
         )
         db.add(cache)
     else:
@@ -42,6 +44,7 @@ def save(db: Session, book_id: str, result: GraphResult, *, boundary_label: str 
         cache.edges_json = edges_json
         cache.boundary_label = boundary_label
         cache.processed_through_order = result.processed_through_order
+        cache.setting = result.setting or cache.setting
     db.commit()
     db.refresh(cache)
     return cache

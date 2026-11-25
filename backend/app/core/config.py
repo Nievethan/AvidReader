@@ -127,6 +127,11 @@ class Settings:
     portrait_steps: int = 8  # flux-1-schnell maximum
     portrait_concurrency: int = 2
     portrait_timeout_seconds: float = 60.0
+    # Description pass: one text-model call per NEW character, reading every
+    # passage that mentions them (up to the reader's page). Better portraits,
+    # extra neurons (~25 per character with Qwen3, ~100 with Llama 3.3 70B).
+    portrait_describe_pass: bool = True
+    portrait_describe_max_chars: int = 8000
 
     # Scene pictures (reader's "Illustrate" button): the chat model picks the
     # page's key moment, painted with the same image model as portraits.
@@ -188,6 +193,8 @@ def get_settings() -> Settings:
         portrait_steps=max(1, min(8, int(os.environ.get("PORTRAIT_STEPS", "8")))),
         portrait_concurrency=max(1, int(os.environ.get("PORTRAIT_CONCURRENCY", "2"))),
         portrait_timeout_seconds=float(os.environ.get("PORTRAIT_TIMEOUT_SECONDS", "60")),
+        portrait_describe_pass=os.environ.get("PORTRAIT_DESCRIBE_PASS", "true").strip().lower() in {"1", "true", "yes", "on"},
+        portrait_describe_max_chars=max(1000, int(os.environ.get("PORTRAIT_DESCRIBE_MAX_CHARS", "8000"))),
         scenes_dir=Path(scenes_raw) if scenes_raw else DEFAULT_SCENES_DIR,
         scene_max_tokens=int(os.environ.get("SCENE_MAX_TOKENS", "1500")),
     )

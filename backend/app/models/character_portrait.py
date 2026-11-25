@@ -29,6 +29,8 @@ class CharacterPortrait(Base):
     name: Mapped[str] = mapped_column(String(120))
     aliases_json: Mapped[str] = mapped_column(Text, default="[]")
     appearance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured look profile (JSON) the portrait is painted from.
+    look_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # pending | ready | failed (retried on next Update) | skipped (safety filter; never retried)

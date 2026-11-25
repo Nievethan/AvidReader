@@ -21,7 +21,9 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.db import database
-from app.integrations.portraits import PortraitGenerator, build_portrait_prompt, is_nsfw_rejection
+from app.integrations.character_looks import merge_looks
+from app.integrations.interfaces import ReadingBoundary
+from app.integrations.portraits import CharacterDescriber, PortraitGenerator, build_portrait_prompt, is_nsfw_rejection
 from app.models.character_portrait import CharacterPortrait
 from app.repositories import character_portrait_repository as repo
 from app.schemas.character_map import CharacterNode
@@ -55,11 +57,25 @@ class PortraitJob:
     appearance: str | None
     names: list[str] = field(default_factory=list)
     book_title: str | None = None
+    name: str | None = None  # display name: title hints ("Ser", "Lady") + description-pass lookups
+    look: dict | None = None  # structured profile from the character map
+    setting: str | None = None  # the book's era/place phrase
+    boundary: ReadingBoundary | None = None  # reader's position, for the description pass
 
 
 class PortraitService:
-    def __init__(self, *, generator: PortraitGenerator, portraits_dir: Path, concurrency: int = 2) -> None:
+    def __init__(
+        self,
+        *,
+        generator: PortraitGenerator,
+        portraits_dir: Path,
+        concurrency: int = 2,
+        describer: CharacterDescriber | None = None,
+    ) -> None:
         self.generator = generator
+        # Optional: one text-model call per new character to describe them from
+        # every passage read so far (None = use the character map's profile only).
+        self.describer = describer
         self.portraits_dir = Path(portraits_dir)
         self._concurrency = max(1, concurrency)
         self._semaphore: asyncio.Semaphore | None = None
@@ -69,7 +85,16 @@ class PortraitService:
 
     # ---- matching -----------------------------------------------------
 
-    def sync(self, db: Session, book_id: str, nodes: list[dict], *, book_title: str | None = None) -> list[PortraitJob]:
+    def sync(
+        self,
+        db: Session,
+        book_id: str,
+        nodes: list[dict],
+        *,
+        book_title: str | None = None,
+        setting: str | None = None,
+        boundary: ReadingBoundary | None = None,
+    ) -> list[PortraitJob]:
         """Called on every Update, after the graph is saved. Links each
         character to its existing portrait (by id, alias, or unambiguous name
         variant) and returns jobs only for characters that need an image."""
@@ -114,8 +139,11 @@ class PortraitService:
         for node in nodes:
             portrait = matched.get(node["id"])
             appearance = node.get("appearance")
+            look = node.get("look") if isinstance(node.get("look"), dict) else None
             if portrait is None:
-                portrait = repo.create_pending(db, book_id, node["id"], name=node["name"], appearance=appearance)
+                portrait = repo.create_pending(
+                    db, book_id, node["id"], name=node["name"], appearance=appearance, look=look
+                )
                 portraits.append(portrait)
             elif portrait.status == "ready":
                 continue  # keep the existing picture -- never regenerate
@@ -125,7 +153,7 @@ class PortraitService:
                 continue  # already being generated
             else:
                 # failed, or pending from a job that died with the process
-                repo.mark_pending(db, portrait, appearance=appearance)
+                repo.mark_pending(db, portrait, appearance=appearance, look=look)
             key = (book_id, portrait.char_id)
             if key in self._active:
                 continue
@@ -137,6 +165,10 @@ class PortraitService:
                     appearance=portrait.appearance,
                     names=names,
                     book_title=book_title,
+                    name=node.get("name") or portrait.name,
+                    look=repo.look(portrait),
+                    setting=setting,
+                    boundary=boundary,
                 )
             )
         return jobs
@@ -156,10 +188,18 @@ class PortraitService:
 
     async def _run_one(self, job: PortraitJob) -> None:
         key = (job.book_id, job.char_id)
-        prompt = build_portrait_prompt(job.appearance, names=job.names, book_title=job.book_title)
+        look = job.look
+        prompt = self._prompt(job, look)
         try:
             assert self._semaphore is not None
             async with self._semaphore:
+                if self.describer is not None and job.boundary is not None and job.name:
+                    # Everything read so far about this character, not just the
+                    # batch they first appeared in. Its values win; the map's
+                    # profile fills any gaps. None (nothing found / error) -> map only.
+                    described = await self.describer.describe(job.book_id, job.name, job.boundary)
+                    look = merge_looks(described, job.look)
+                    prompt = self._prompt(job, look)
                 try:
                     image = await self.generator.generate(prompt)
                 except Exception as exc:
@@ -169,9 +209,7 @@ class PortraitService:
                     # then ("beautiful, golden hair, green eyes"). Retry once,
                     # softened; a second rejection is final (see below).
                     logger.info("Portrait %s/%s flagged as NSFW; retrying softened", job.book_id, job.char_id)
-                    prompt = build_portrait_prompt(
-                        job.appearance, names=job.names, book_title=job.book_title, safe=True
-                    )
+                    prompt = self._prompt(job, look, safe=True)
                     image = await self.generator.generate(prompt)
             path = self._image_path(job.book_id, job.char_id)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +217,7 @@ class PortraitService:
             with database.SessionLocal() as db:
                 portrait = repo.get(db, job.book_id, job.char_id)
                 if portrait is not None:  # book may have been deleted meanwhile
-                    repo.mark_ready(db, portrait, image_path=str(path), prompt=prompt)
+                    repo.mark_ready(db, portrait, image_path=str(path), prompt=prompt, look=look)
         except Exception as exc:
             logger.warning("Portrait generation failed for %s/%s: %s", job.book_id, job.char_id, exc)
             # Rejected by the safety filter even after softening: mark it
@@ -198,6 +236,13 @@ class PortraitService:
                 logger.warning("Could not record portrait failure", exc_info=True)
         finally:
             self._active.discard(key)
+
+    @staticmethod
+    def _prompt(job: PortraitJob, look: dict | None, *, safe: bool = False) -> str:
+        return build_portrait_prompt(
+            job.appearance, names=job.names, book_title=job.book_title, safe=safe,
+            look=look, setting=job.setting, name=job.name,
+        )
 
     def _image_path(self, book_id: str, char_id: str) -> Path:
         return self.portraits_dir / book_id / f"{char_id}.jpg"

@@ -417,3 +417,218 @@ def test_other_errors_still_retry_on_next_update(env):
     retrieval.read_more("Harry was small and skinny, and he ran.")
     _update(client, book_id)
     assert _nodes(client, book_id)["Harry"]["portrait_status"] == "ready"
+
+
+# ---- structured look profiles, setting, description pass (B5-B9) ------------
+
+from app.integrations import character_graph as cg  # noqa: E402
+from app.integrations.character_looks import (  # noqa: E402
+    build_subject,
+    merge_looks,
+    normalize_look,
+    sex_from_name,
+)
+from app.integrations.interfaces import ReadingBoundary  # noqa: E402
+from app.integrations.portraits import CharacterDescriber, select_passages  # noqa: E402
+
+
+def test_extraction_prompt_has_one_shape_with_look_and_setting():
+    """Regression: a merge left TWO JSON shapes in the prompt (the second
+    without appearance) and run-together instructions."""
+    assert cg._REQUIRED_SHAPE.count('"characters"') == 1
+    assert '"look"' in cg._REQUIRED_SHAPE and '"setting"' in cg._REQUIRED_SHAPE
+    user = cg._build_messages([_passage(CH1)])[1]["content"]
+    assert user.count("Output JSON only.") == 1
+
+
+def test_normalize_look_cleans_values():
+    look = normalize_look({"sex": "Male", "age": "not described", "hair": "golden", "eyes": "N/A", "junk": "x"})
+    assert look == {"type": "human", "sex": "man", "hair": "golden"}
+    assert normalize_look({"species": "direwolf", "hair": "white"})["type"] == "animal"
+    assert normalize_look({"sex": "unknown"}) is None
+    assert normalize_look("a man") is None
+
+
+def test_merge_looks_primary_wins_and_fallback_fills_gaps():
+    merged = merge_looks({"sex": "man", "hair": "golden"}, {"sex": "woman", "eyes": "green", "hair": "brown"})
+    assert merged == {"sex": "man", "hair": "golden", "eyes": "green"}
+
+
+@pytest.mark.parametrize(
+    ("name", "sex"),
+    [("Ser Boros", "man"), ("Septa Mordane", "woman"), ("Lady Arryn", "woman"), ("Maester Luwin", "man"),
+     ("Old Nan", None), ("Hodor", None)],
+)
+def test_sex_from_titles(name, sex):
+    assert sex_from_name(name) == sex
+
+
+@pytest.mark.parametrize(
+    ("name", "look", "appearance", "expected"),
+    [
+        ("Jaime Lannister", {"sex": "man", "age": "young adult", "build": "tall", "hair": "golden", "eyes": "green"},
+         None, "a tall young adult man with golden hair, green eyes"),
+        ("Ghost", {"type": "animal", "species": "direwolf", "hair": "white", "eyes": "red"},
+         None, "a direwolf with white fur, red eyes"),
+        ("Robb", {"sex": "boy", "age": "fourteen", "hair": "auburn"}, None, "a fourteen-year-old boy with auburn hair"),
+        ("Ser Boros", None, None, "a man"),
+        ("Septa Mordane", None, "a bony woman with sharp eyes", "a bony woman with sharp eyes"),
+        ("Catelyn", None, None, "an ordinary adult person"),
+        ("Eddard Stark", {"sex": "man", "age": "in his mid-thirties", "hair": "long brown", "clothing": "cloak and furs"},
+         None, "a man in his mid-thirties with long brown hair, wearing cloak and furs"),
+    ],
+)
+def test_build_subject_always_names_who_is_drawn(name, look, appearance, expected):
+    assert build_subject(normalize_look(look) if look else None, appearance, name) == expected
+
+
+def test_dwarf_is_drawn_as_an_adult():
+    subject = build_subject(normalize_look({"sex": "man", "build": "dwarf"}), None, "Tyrion")
+    assert "adult man with dwarfism and an adult face" in subject
+    assert "child" not in subject and "boy" not in subject
+
+
+def test_comparisons_and_horses_are_cleaned():
+    joffrey = build_subject(normalize_look({"sex": "boy", "age": "twelve years old", "build": "taller than Jon Snow"}),
+                            None, "Joffrey")
+    assert joffrey == "a tall twelve-year-old boy"
+    will = build_subject(normalize_look({"sex": "man", "age": "young", "distinctive": "with a shaggy garron",
+                                         "clothing": "a cloak, riding a pony"}), None, "Will")
+    assert "garron" not in will and "pony" not in will and "riding" not in will
+    assert will.startswith("a young man")
+
+
+def test_prompt_includes_setting_scrubbed_and_animal_framing():
+    prompt = build_portrait_prompt(
+        None, names=["Ghost", "Winterfell"], look=normalize_look({"species": "direwolf", "hair": "white"}),
+        setting="medieval fantasy kingdom, the cold castle of Winterfell", name="Ghost",
+    )
+    assert "Setting: medieval fantasy kingdom, the cold castle of" in prompt
+    assert "Winterfell" not in prompt
+    assert "Close-up portrait of the animal" in prompt
+
+
+def test_normalize_stores_look_and_rendered_appearance():
+    entry = {"name": "Harry", "look": {"sex": "boy", "build": "small and skinny", "hair": "untidy black"}}
+    nodes, _ = _normalize({"characters": [entry]}, [_passage(CH1)])
+    assert nodes[0]["look"]["sex"] == "boy"
+    assert nodes[0]["appearance"] == "a small and skinny boy with untidy black hair"
+
+
+def test_merge_graph_merges_look_field_by_field():
+    base = [{"id": "char_harry", "name": "Harry", "look": {"type": "human", "sex": "boy"}}]
+    new = [{"id": "char_harry", "name": "Harry", "look": {"type": "human", "hair": "untidy black"}}]
+    nodes, _ = merge_graph(base, [], new, [])
+    assert nodes[0]["look"] == {"type": "human", "sex": "boy", "hair": "untidy black"}
+    assert nodes[0]["appearance"] == "a boy with untidy black hair"
+
+
+def test_setting_is_extracted_once_and_kept(env):
+    client, book_id, retrieval, chat, _ = env
+
+    class _SettingChat(_ChatModel):
+        def __init__(self):
+            super().__init__()
+            self.setting = "quiet English suburb, present day"
+
+        async def complete(self, messages, *, max_tokens):
+            return json.dumps({"setting": self.setting, "characters": self.characters, "relationships": []})
+
+    setting_chat = _SettingChat()
+    graph = LLMCharacterGraphProvider(retrieval_provider=retrieval, chat_model=setting_chat)
+    client.app.dependency_overrides[get_character_graph_provider] = lambda: graph
+    setting_chat.characters = [_char("Harry", "a skinny boy")]
+    assert _update(client, book_id)["setting"] == "quiet English suburb, present day"
+
+    setting_chat.setting = "a castle in the mountains"  # later batches don't change it
+    retrieval.read_more("Harry was small and skinny, and he ran.")
+    _update(client, book_id)
+    body = client.get(f"/api/v1/books/{book_id}/relationships").json()
+    assert body["setting"] == "quiet English suburb, present day"
+
+
+# -- description pass --
+
+def test_select_passages_prefers_mentions_and_keeps_reading_order():
+    passages = [
+        _passage("Robb laughed in the yard.", 0),
+        _passage("Jaime Lannister was tall, with golden hair and green eyes.", 1),
+        _passage("Nobody else here.", 2),
+        _passage("Jaime smiled at the king.", 3),
+    ]
+    chosen = select_passages("Jaime Lannister", passages, max_chars=10_000)
+    assert [p.order_index for p in chosen] == [1, 3]
+    assert select_passages("The man", passages, max_chars=10_000) == []
+    assert len(select_passages("Jaime Lannister", passages, max_chars=10)) == 1  # best one only
+
+
+class _DescribeChat:
+    status = "ok"
+    name = "describe-stub"
+
+    def __init__(self, look: dict | None = None, fail: bool = False):
+        self.look = look or {}
+        self.fail = fail
+        self.calls: list[str] = []
+
+    async def complete(self, messages, *, max_tokens):
+        self.calls.append(messages[1]["content"])
+        if self.fail:
+            raise CloudflareError("Cloudflare API error 500")
+        return json.dumps({"look": self.look})
+
+
+def test_describer_returns_look_or_none():
+    retrieval = _Retrieval()
+    chat = _DescribeChat({"sex": "woman", "hair": "blonde", "age": "not described"})
+    describer = CharacterDescriber(chat_model=chat, retrieval_provider=retrieval)
+    boundary = ReadingBoundary(book_id="b")
+    look = asyncio.run(describer.describe("b", "Mrs. Dursley", boundary))
+    assert look == {"type": "human", "sex": "woman", "hair": "blonde"}
+    assert 'called "Mrs. Dursley"' in chat.calls[0]
+    assert asyncio.run(describer.describe("b", "Nobody Here", boundary)) is None  # no passages, no call
+    assert len(chat.calls) == 1
+    failing = CharacterDescriber(chat_model=_DescribeChat(fail=True), retrieval_provider=retrieval)
+    assert asyncio.run(failing.describe("b", "Mrs. Dursley", boundary)) is None
+
+
+@pytest.fixture()
+def env_with_describer(env):
+    client, book_id, retrieval, chat, generator = env
+    describe_chat = _DescribeChat({"sex": "woman", "build": "thin", "hair": "blonde", "eyes": "pale"})
+    service = PortraitService(
+        generator=generator,
+        portraits_dir=get_settings().portraits_dir,
+        describer=CharacterDescriber(chat_model=describe_chat, retrieval_provider=retrieval),
+    )
+    client.app.dependency_overrides[get_portrait_service] = lambda: service
+    return client, book_id, retrieval, chat, generator, describe_chat
+
+
+def test_description_pass_shapes_the_prompt_once_per_new_character(env_with_describer):
+    client, book_id, retrieval, chat, generator, describe_chat = env_with_describer
+    chat.characters = [{"name": "Mrs. Dursley", "look": {"hair": "blonde"}}]
+    _update(client, book_id)
+    assert len(describe_chat.calls) == 1
+    assert "a thin woman with blonde hair, pale eyes" in generator.prompts[0]
+    assert "Dursley" not in generator.prompts[0]
+
+    retrieval.read_more("Mrs. Dursley craned over the fence again.")
+    _update(client, book_id)
+    assert len(describe_chat.calls) == 1  # existing portrait reused: no second description call
+
+    from app.db import database
+    from app.models.character_portrait import CharacterPortrait
+
+    with database.SessionLocal() as db:
+        row = db.query(CharacterPortrait).filter_by(book_id=book_id).one()
+        assert json.loads(row.look_json)["sex"] == "woman"  # the profile it was painted from
+
+
+def test_description_pass_failure_falls_back_to_map_profile(env_with_describer):
+    client, book_id, _, chat, generator, describe_chat = env_with_describer
+    describe_chat.fail = True
+    chat.characters = [{"name": "Harry", "look": {"sex": "boy", "hair": "untidy black"}}]
+    _update(client, book_id)
+    assert "a boy with untidy black hair" in generator.prompts[0]
+    assert _nodes(client, book_id)["Harry"]["portrait_status"] == "ready"
