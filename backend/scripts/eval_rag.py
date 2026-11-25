@@ -16,7 +16,7 @@ and scores the answers against a labelled question set.
         --dataset tests/eval/harry_potter_1.json
 
     # benchmark several chat models on the same questions
-    python scripts/eval_rag.py --models @cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/qwen/qwen3-30b-a3b-fp8
+    python scripts/eval_rag.py --models @cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/qwen/qwen3.8-27b
 
 Metrics
 * ingestion pages/min                         (ER-05, target >= 50)

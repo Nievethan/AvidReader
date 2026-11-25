@@ -19,7 +19,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BACKEND_DIR / ".env")
 ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
 TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
-MODEL = os.getenv("CLOUDFLARE_TEXT_MODEL", "@cf/qwen/qwen3-30b-a3b-fp8").strip()
+MODEL = os.getenv("CLOUDFLARE_TEXT_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast").strip()
 OUTPUT_DIR = BACKEND_DIR / "outputs" / "ai_tests"
 # Fixture-only character inventory. In production, use the spoiler-safe
 # character registry / already permitted Character Map nodes for this book.
