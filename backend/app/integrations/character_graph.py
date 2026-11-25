@@ -34,6 +34,7 @@ from app.integrations.interfaces import (
     RetrievalProvider,
     RetrievedPassage,
 )
+from app.integrations.portraits import meaningful_appearance
 from app.integrations.rag_retrieval import format_passages
 from app.rag.llm import ChatModel
 
@@ -246,7 +247,8 @@ def _normalize(
         traits_list = [_plain_text(t, 50) for t in traits[:8] if isinstance(t, str)] if isinstance(traits, list) else []
         description = _plain_text(entry.get("description"), 400)
         role = _plain_text(entry.get("role") or "unknown", 40)
-        appearance = _plain_text(entry.get("appearance"), 300)
+        # "not described directly" & co. become None, never a portrait prompt
+        appearance = meaningful_appearance(_plain_text(entry.get("appearance"), 300))
         nodes.append(
             {
                 "id": char_id,
@@ -341,6 +343,12 @@ def merge_graph(
             target["role"] = new["role"]
         if not target.get("first_seen_chunk_id"):
             target["first_seen_chunk_id"] = new.get("first_seen_chunk_id")
+        # Keep the richer look: a character named in one batch but only
+        # described in a later one must not stay with no appearance.
+        new_look = meaningful_appearance(new.get("appearance"))
+        old_look = meaningful_appearance(target.get("appearance"))
+        if new_look and (not old_look or len(new_look.split()) > len(old_look.split())):
+            target["appearance"] = new_look
 
     edges = [dict(e) for e in base_edges]
     seen = {(e["source"], e["target"], e["relationship"]) for e in edges}

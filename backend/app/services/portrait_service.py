@@ -21,7 +21,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.db import database
-from app.integrations.portraits import PortraitGenerator, build_portrait_prompt
+from app.integrations.portraits import PortraitGenerator, build_portrait_prompt, is_nsfw_rejection
 from app.models.character_portrait import CharacterPortrait
 from app.repositories import character_portrait_repository as repo
 from app.schemas.character_map import CharacterNode
@@ -119,6 +119,8 @@ class PortraitService:
                 portraits.append(portrait)
             elif portrait.status == "ready":
                 continue  # keep the existing picture -- never regenerate
+            elif portrait.status == "skipped":
+                continue  # the safety filter rejected it twice; retrying won't help
             elif (book_id, portrait.char_id) in self._active:
                 continue  # already being generated
             else:
@@ -144,7 +146,8 @@ class PortraitService:
     async def run_jobs(self, jobs: list[PortraitJob]) -> None:
         """Background task: generates queued portraits, at most
         `concurrency` at a time. Never raises -- a failure marks the portrait
-        `failed` and the next Update retries it."""
+        `failed` and the next Update retries it, except a repeated safety-filter
+        rejection, which is marked `skipped` and never retried."""
         if not jobs:
             return
         if self._semaphore is None:
@@ -157,7 +160,19 @@ class PortraitService:
         try:
             assert self._semaphore is not None
             async with self._semaphore:
-                image = await self.generator.generate(prompt)
+                try:
+                    image = await self.generator.generate(prompt)
+                except Exception as exc:
+                    if not is_nsfw_rejection(exc):
+                        raise
+                    # Cloudflare's safety filter flags harmless portraits now and
+                    # then ("beautiful, golden hair, green eyes"). Retry once,
+                    # softened; a second rejection is final (see below).
+                    logger.info("Portrait %s/%s flagged as NSFW; retrying softened", job.book_id, job.char_id)
+                    prompt = build_portrait_prompt(
+                        job.appearance, names=job.names, book_title=job.book_title, safe=True
+                    )
+                    image = await self.generator.generate(prompt)
             path = self._image_path(job.book_id, job.char_id)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(image)
@@ -167,11 +182,18 @@ class PortraitService:
                     repo.mark_ready(db, portrait, image_path=str(path), prompt=prompt)
         except Exception as exc:
             logger.warning("Portrait generation failed for %s/%s: %s", job.book_id, job.char_id, exc)
+            # Rejected by the safety filter even after softening: mark it
+            # "skipped" so later Updates stop retrying (the UI keeps the icon).
+            # Anything else (rate limit, network) stays "failed" and is retried.
+            skipped = is_nsfw_rejection(exc)
             try:
                 with database.SessionLocal() as db:
                     portrait = repo.get(db, job.book_id, job.char_id)
                     if portrait is not None:
-                        repo.mark_failed(db, portrait, error=f"{type(exc).__name__}: {exc}", prompt=prompt)
+                        repo.mark_failed(
+                            db, portrait, error=f"{type(exc).__name__}: {exc}", prompt=prompt,
+                            status="skipped" if skipped else "failed",
+                        )
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Could not record portrait failure", exc_info=True)
         finally:

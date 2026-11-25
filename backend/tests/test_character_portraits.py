@@ -12,10 +12,10 @@ import pytest
 
 from app.api.deps import get_character_graph_provider, get_portrait_service
 from app.core.config import get_settings
-from app.integrations.character_graph import LLMCharacterGraphProvider, _normalize
+from app.integrations.character_graph import LLMCharacterGraphProvider, _normalize, merge_graph
 from app.integrations.cloudflare import CloudflareClient, CloudflareError
 from app.integrations.interfaces import RetrievedPassage
-from app.integrations.portraits import build_portrait_prompt, scrub_names
+from app.integrations.portraits import build_portrait_prompt, meaningful_appearance, scrub_names
 from app.services.portrait_service import PortraitService
 from tests.conftest import make_minimal_pdf_bytes, upload
 
@@ -66,8 +66,14 @@ class _Generator:
     def __init__(self):
         self.prompts: list[str] = []
         self.fail_next = 0
+        self.nsfw_next = 0  # reject this many calls with Cloudflare's NSFW error
+        self.calls = 0
 
     async def generate(self, prompt: str) -> bytes:
+        self.calls += 1
+        if self.nsfw_next:
+            self.nsfw_next -= 1
+            raise CloudflareError("Cloudflare API error 400: AiError: AiError: Input prompt contains NSFW content.")
         if self.fail_next:
             self.fail_next -= 1
             raise CloudflareError("Cloudflare API error 429: daily free allocation exceeded")
@@ -289,3 +295,125 @@ def test_cloudflare_generate_image_rejects_missing_or_invalid_image(result):
     client = _cf_client(lambda request: httpx.Response(200, json={"success": True, "result": result}))
     with pytest.raises(CloudflareError):
         asyncio.run(client.generate_image("@cf/x/y", "a boy"))
+
+
+# ---- portrait prompt bug fixes (Game of Thrones findings) -------------------
+
+GOT_NAMES = [
+    "The man", "The woman", "The killer", "Maester Luwin", "Septa Mordane", "Old Nan",
+    "Jaime Lannister", "Hodor", "Lady Arryn", "Ser Boros",
+]
+
+
+@pytest.mark.parametrize(
+    ("appearance", "must_keep"),
+    [
+        ("a small grey man with a heavy chain around his neck", "small grey man with a heavy chain"),
+        ("a bony woman with sharp eyes and a thin mouth", "bony woman with sharp eyes"),
+        ("an old woman", "an old woman"),
+        ("a man with a foul stench, like a killer", "a man with a foul stench, like a killer"),
+    ],
+)
+def test_generic_characters_never_scrub_common_words(appearance, must_keep):
+    """Regression: "The man" / "The woman" / "The killer" were listed as
+    characters, so "man", "woman" and "killer" were stripped from EVERY prompt
+    (Maester Luwin became a grey dog, Septa Mordane a skeleton)."""
+    prompt = build_portrait_prompt(appearance, names=GOT_NAMES, book_title="A Game of Thrones")
+    assert must_keep in prompt
+
+
+def test_real_proper_names_are_still_scrubbed():
+    prompt = build_portrait_prompt(
+        "Hodor, a huge stableboy who serves Jaime Lannister's family in a Game of Thrones",
+        names=GOT_NAMES, book_title="A Game of Thrones",
+    )
+    for word in ("hodor", "jaime", "lannister", "thrones"):
+        assert word not in prompt.lower(), prompt
+    assert "huge stableboy" in prompt
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["not described directly", "Not described.", "Appearance not described", "not mentioned",
+     "unknown", "N/A", "none", "No description given", "", None],
+)
+def test_non_answers_are_not_appearances(value):
+    assert meaningful_appearance(value) is None
+    assert "an ordinary adult person" in build_portrait_prompt(value, names=GOT_NAMES)
+
+
+@pytest.mark.parametrize("value", ["a man, not described further than his scar", "an old woman", "tall, golden hair"])
+def test_real_descriptions_are_kept(value):
+    assert meaningful_appearance(value) == value
+
+
+def test_normalize_drops_non_answer_appearance():
+    nodes, _ = _normalize({"characters": [_char("Harry", "not described directly")]}, [_passage(CH1)])
+    assert nodes[0]["appearance"] is None
+
+
+def test_merge_graph_takes_appearance_from_a_later_batch():
+    """Regression: a character named in batch 1 but only described in batch 3
+    kept "no appearance" forever (merge only updated description/role)."""
+    base = [{"id": "char_hodor", "name": "Hodor", "role": "minor", "description": "", "appearance": None}]
+    later = [{"id": "char_hodor", "name": "Hodor", "role": "minor", "description": "",
+              "appearance": "a giant of a man, slow and gentle, in a stableboy's tunic"}]
+    nodes, _ = merge_graph(base, [], later, [])
+    assert nodes[0]["appearance"] == "a giant of a man, slow and gentle, in a stableboy's tunic"
+
+
+def test_merge_graph_keeps_richer_appearance_and_ignores_non_answers():
+    base = [{"id": "char_robb", "name": "Robb", "appearance": "a tall boy with auburn hair and blue eyes"}]
+    nodes, _ = merge_graph(base, [], [{"id": "char_robb", "name": "Robb", "appearance": "red cheeks"}], [])
+    assert nodes[0]["appearance"] == "a tall boy with auburn hair and blue eyes"
+    nodes, _ = merge_graph(base, [], [{"id": "char_robb", "name": "Robb", "appearance": "not described directly"}], [])
+    assert nodes[0]["appearance"] == "a tall boy with auburn hair and blue eyes"
+
+
+def test_safe_prompt_drops_flagged_words_and_adds_clothing():
+    prompt = build_portrait_prompt("beautiful, golden hair, green eyes", names=GOT_NAMES, safe=True)
+    assert "beautiful" not in prompt.lower()
+    assert "skin texture" not in prompt
+    assert "fully clothed in period costume" in prompt
+    assert "golden hair, green eyes" in prompt
+
+
+def test_nsfw_false_positive_is_retried_once_with_softened_prompt(env):
+    client, book_id, _, chat, generator = env
+    chat.characters = [_char("Harry", "beautiful, small and skinny boy")]
+    generator.nsfw_next = 1
+    _update(client, book_id)
+    assert generator.calls == 2
+    assert "fully clothed in period costume" in generator.prompts[0]
+    assert "beautiful" not in generator.prompts[0].lower()
+    assert _nodes(client, book_id)["Harry"]["portrait_status"] == "ready"
+
+
+def test_repeated_nsfw_rejection_is_skipped_and_never_retried(env):
+    client, book_id, retrieval, chat, generator = env
+    chat.characters = [_char("Harry", "beautiful, small and skinny boy")]
+    generator.nsfw_next = 2
+    body = _update(client, book_id)
+    assert body["status"] == "ready"  # the Update itself still succeeds
+    assert generator.calls == 2
+    node = _nodes(client, book_id)["Harry"]
+    assert node["portrait_status"] == "skipped"
+    assert node["portrait_url"] is None
+
+    retrieval.read_more("Harry was small and skinny, and he ran.")
+    _update(client, book_id)
+    assert generator.calls == 2  # not retried on later Updates
+    assert _nodes(client, book_id)["Harry"]["portrait_status"] == "skipped"
+
+
+def test_other_errors_still_retry_on_next_update(env):
+    """Only the safety filter is final; a rate limit stays "failed" and retries."""
+    client, book_id, retrieval, chat, generator = env
+    chat.characters = [_char("Harry", "a skinny boy")]
+    generator.fail_next = 1
+    _update(client, book_id)
+    assert generator.calls == 1  # no softened retry for non-NSFW errors
+    assert _nodes(client, book_id)["Harry"]["portrait_status"] == "failed"
+    retrieval.read_more("Harry was small and skinny, and he ran.")
+    _update(client, book_id)
+    assert _nodes(client, book_id)["Harry"]["portrait_status"] == "ready"

@@ -67,8 +67,11 @@ def mark_ready(db: Session, portrait: CharacterPortrait, *, image_path: str, pro
     db.commit()
 
 
-def mark_failed(db: Session, portrait: CharacterPortrait, *, error: str, prompt: str | None = None) -> None:
-    portrait.status = "failed"
+def mark_failed(
+    db: Session, portrait: CharacterPortrait, *, error: str, prompt: str | None = None, status: str = "failed"
+) -> None:
+    """`status` is "failed" (retried on the next Update) or "skipped" (never retried)."""
+    portrait.status = status
     portrait.error = error[:500]
     if prompt is not None:
         portrait.prompt = prompt
