@@ -25,7 +25,11 @@ DEFAULT_EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
 DEFAULT_EMBEDDING_DIMENSION = 768
 # Chat model for grounded answers. Qwen3 was the only benchmarked model under
 # the 2.5 s p95 latency target (ER-02); see `scripts/eval_rag.py --models`.
-DEFAULT_TEXT_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"
+# Llama 3.3 70B doesn't "think" before answering, so replies come back in
+# seconds. The previous default, qwen3-30b-a3b-fp8, was retired by Cloudflare
+# on 2026-11-20 (410 Gone); its suggested successor qwen3.8-27b reasons at
+# full effort by default and regularly hit our 45 s timeouts.
+DEFAULT_TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 DEFAULT_QDRANT_LOCAL_PATH = BACKEND_ROOT / "data" / "qdrant"
 DEFAULT_EXTRACTED_DIR = BACKEND_ROOT / "data" / "extracted"
 # Cloudflare-hosted text-to-image model for character portraits; runs on the
@@ -110,9 +114,10 @@ class Settings:
     character_map_max_tokens: int = 4000
     character_map_timeout_seconds: float = 45.0
     # Each Update sends only text not analyzed yet, in batches of at most
-    # this many characters (~3 chars/token: 60k ~= 20k tokens, fits Qwen3's
-    # 32k context with the reply), and at most this many batches per click.
-    character_map_batch_chars: int = 60_000
+    # this many characters (~3 chars/token: 45k ~= 15k tokens, which leaves
+    # room for the prompt and the 4k-token reply in Llama 3.3's 24k context),
+    # and at most this many batches per click.
+    character_map_batch_chars: int = 45_000
     character_map_max_batches: int = 6
 
     # Character portraits: generated once per character (on the first
@@ -176,7 +181,7 @@ def get_settings() -> Settings:
         history_max_messages=int(os.environ.get("HISTORY_MAX_MESSAGES", "6")),
         character_map_max_tokens=int(os.environ.get("CHARACTER_MAP_MAX_TOKENS", "4000")),
         character_map_timeout_seconds=float(os.environ.get("CHARACTER_MAP_TIMEOUT_SECONDS", "45")),
-        character_map_batch_chars=max(5_000, int(os.environ.get("CHARACTER_MAP_BATCH_CHARS", "60000"))),
+        character_map_batch_chars=max(5_000, int(os.environ.get("CHARACTER_MAP_BATCH_CHARS", "45000"))),
         character_map_max_batches=max(1, int(os.environ.get("CHARACTER_MAP_MAX_BATCHES", "6"))),
         cloudflare_image_model=_model_id(os.environ.get("CLOUDFLARE_IMAGE_MODEL"), DEFAULT_IMAGE_MODEL),
         portraits_dir=Path(portraits_raw) if portraits_raw else DEFAULT_PORTRAITS_DIR,
