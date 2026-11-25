@@ -89,7 +89,11 @@ def _char(name: str, appearance: str = "") -> dict:
 def env(client):
     retrieval, chat, generator = _Retrieval(), _ChatModel(), _Generator()
     graph = LLMCharacterGraphProvider(retrieval_provider=retrieval, chat_model=chat)
-    service = PortraitService(generator=generator, portraits_dir=get_settings().portraits_dir, concurrency=2)
+    # min_details=0: these tests are about reuse/matching, not the "too little
+    # description" rule (covered separately below), so every character is painted.
+    service = PortraitService(
+        generator=generator, portraits_dir=get_settings().portraits_dir, concurrency=2, min_details=0
+    )
     client.app.dependency_overrides[get_character_graph_provider] = lambda: graph
     client.app.dependency_overrides[get_portrait_service] = lambda: service
     book = upload(client, make_minimal_pdf_bytes(), title="Harry Potter and the Stone")
@@ -503,9 +507,9 @@ def test_prompt_includes_setting_scrubbed_and_animal_framing():
         None, names=["Ghost", "Winterfell"], look=normalize_look({"species": "direwolf", "hair": "white"}),
         setting="medieval fantasy kingdom, the cold castle of Winterfell", name="Ghost",
     )
-    assert "Setting: medieval fantasy kingdom, the cold castle of" in prompt
+    assert "in a setting of medieval fantasy kingdom, the cold castle of" in prompt
     assert "Winterfell" not in prompt
-    assert "Close-up portrait of the animal" in prompt
+    assert prompt.startswith("Wildlife film still: a direwolf with white fur")
 
 
 def test_normalize_stores_look_and_rendered_appearance():
@@ -600,6 +604,7 @@ def env_with_describer(env):
         generator=generator,
         portraits_dir=get_settings().portraits_dir,
         describer=CharacterDescriber(chat_model=describe_chat, retrieval_provider=retrieval),
+        min_details=0,
     )
     client.app.dependency_overrides[get_portrait_service] = lambda: service
     return client, book_id, retrieval, chat, generator, describe_chat
@@ -632,3 +637,253 @@ def test_description_pass_failure_falls_back_to_map_profile(env_with_describer):
     _update(client, book_id)
     assert "a boy with untidy black hair" in generator.prompts[0]
     assert _nodes(client, book_id)["Harry"]["portrait_status"] == "ready"
+
+
+# ---- prompt styles (C), who gets a portrait (D14), titled duplicates (D15),
+# ---- one-time placeholder upgrades (E16) -----------------------------------
+
+from app.integrations.character_looks import detail_count, titled_variant  # noqa: E402
+
+_JAIME = normalize_look({"sex": "man", "build": "tall", "hair": "golden"})
+
+
+def test_cinematic_prompt_has_no_studio_cues_and_positive_wording():
+    prompt = build_portrait_prompt(None, names=[], look=_JAIME, setting="cold northern castle")
+    assert prompt.startswith("Cinematic film still from a period drama: a tall man with golden hair")
+    for studio in ("window light", "85mm", "plain muted background", "skin texture"):
+        assert studio not in prompt
+    for negative in ("No text", "no watermark", "Not a celebrity"):
+        assert negative not in prompt
+    assert "softly blurred background of cold northern castle" in prompt
+    assert "wearing clothing that fits the story's time and place" in prompt
+    assert "unknown actor" in prompt and "clean frame" in prompt
+
+
+def test_clothing_from_profile_replaces_the_generic_clothing_clause():
+    look = normalize_look({"sex": "man", "hair": "dark", "clothing": "black leather and ringmail"})
+    prompt = build_portrait_prompt(None, names=[], look=look)
+    assert "wearing black leather and ringmail" in prompt
+    assert "fits the story's time and place" not in prompt
+
+
+def test_painted_style_and_animal_templates():
+    painted = build_portrait_prompt(None, names=[], look=_JAIME, style="painted")
+    assert painted.startswith("Oil-painted fantasy book portrait of a tall man")
+    wolf = normalize_look({"species": "direwolf", "hair": "white"})
+    assert build_portrait_prompt(None, names=[], look=wolf).startswith("Wildlife film still: a direwolf")
+    assert build_portrait_prompt(None, names=[], look=wolf, style="painted").startswith("Oil painting of a direwolf")
+    assert "in its natural surroundings" in build_portrait_prompt(None, names=[], look=wolf)
+    # unknown style falls back to the default
+    assert build_portrait_prompt(None, names=[], look=_JAIME, style="anime").startswith("Cinematic film still")
+
+
+def test_detail_count_and_titled_variants():
+    assert detail_count({"sex": "man"}) == 0
+    assert detail_count({"hair": "golden", "eyes": "green"}) == 2
+    assert detail_count(None, "an old woman") == 1
+    assert detail_count(None, "a bony woman with sharp eyes and a thin mouth") == 3
+    assert titled_variant("Magister Illyrio", None, "Illyrio Mopatis", None)
+    assert titled_variant("Lady Arryn", None, "Lysa Arryn", {"sex": "woman"})
+    assert not titled_variant("Lady Arryn", None, "Jon Arryn", {"sex": "man"})
+    assert not titled_variant("Mr. Dursley", None, "Mrs. Dursley", None)
+    assert not titled_variant("Dudley", None, "Dudley Dursley", None)  # plain variant: other rule
+
+
+def test_merge_graph_merges_titled_duplicates_only_when_unambiguous():
+    base = [
+        {"id": "char_illyrio_mopatis", "name": "Illyrio Mopatis", "look": None},
+        {"id": "char_lysa_arryn", "name": "Lysa Arryn", "look": {"type": "human", "sex": "woman"}},
+        {"id": "char_jon_arryn", "name": "Jon Arryn", "look": {"type": "human", "sex": "man"}},
+        {"id": "char_mrs_dursley", "name": "Mrs. Dursley", "look": None},
+    ]
+    new = [
+        {"id": "char_magister_illyrio", "name": "Magister Illyrio", "look": None},
+        {"id": "char_lady_arryn", "name": "Lady Arryn", "look": None},
+        {"id": "char_mr_dursley", "name": "Mr. Dursley", "look": None},
+    ]
+    edges = [{"id": "e", "source": "char_magister_illyrio", "target": "char_lady_arryn",
+              "relationship": "ally", "label": "", "evidence": ""}]
+    nodes, merged_edges = merge_graph(base, [], new, edges)
+    ids = {n["id"] for n in nodes}
+    assert "char_magister_illyrio" not in ids and "char_lady_arryn" not in ids  # merged
+    assert "char_mr_dursley" in ids  # Mr. never merges into Mrs.
+    assert merged_edges[0]["source"] == "char_illyrio_mopatis"
+    assert merged_edges[0]["target"] == "char_lysa_arryn"
+
+
+@pytest.fixture()
+def strict_env(env):
+    """Default rules: 2 concrete details (or a main role) to be painted."""
+    client, book_id, retrieval, chat, generator = env
+    service = PortraitService(generator=generator, portraits_dir=get_settings().portraits_dir, min_details=2)
+    client.app.dependency_overrides[get_portrait_service] = lambda: service
+    return client, book_id, retrieval, chat, generator
+
+
+def _look_char(name: str, role: str = "minor", **look) -> dict:
+    return {"name": name, "role": role, "description": "", "look": look}
+
+
+def test_too_little_description_waits_without_any_cost(strict_env):
+    client, book_id, _, chat, generator = strict_env
+    chat.characters = [
+        _look_char("Dudley", sex="boy"),  # 0 details, minor -> waits
+        _look_char("Mrs. Dursley", sex="woman", build="thin", hair="blonde"),  # 2 details -> painted
+    ]
+    _update(client, book_id)
+    nodes = _nodes(client, book_id)
+    assert nodes["Dudley"]["portrait_status"] == "waiting"
+    assert nodes["Dudley"]["portrait_url"] is None
+    assert nodes["Mrs. Dursley"]["portrait_status"] == "ready"
+    assert generator.calls == 1
+    assert client.get(f"/api/v1/books/{book_id}/characters/char_dudley/portrait").status_code == 404
+
+
+def test_waiting_character_is_painted_once_described(strict_env):
+    client, book_id, retrieval, chat, generator = strict_env
+    chat.characters = [_look_char("Dudley", sex="boy")]
+    _update(client, book_id)
+    assert generator.calls == 0
+
+    retrieval.read_more("Dudley was very large, with a pink face and thick blond hair.")
+    chat.characters = [_look_char("Dudley", sex="boy", build="very large", hair="thick blond")]
+    _update(client, book_id)
+    assert generator.calls == 1
+    assert _nodes(client, book_id)["Dudley"]["portrait_status"] == "ready"
+
+
+def test_main_character_placeholder_is_upgraded_exactly_once(strict_env):
+    client, book_id, retrieval, chat, generator = strict_env
+    chat.characters = [_look_char("Harry", role="protagonist", sex="boy")]  # main, but no details
+    _update(client, book_id)
+    first_url = _nodes(client, book_id)["Harry"]["portrait_url"]
+    assert generator.calls == 1  # main characters are painted anyway (as a placeholder)
+
+    retrieval.read_more("Harry was small and skinny, with untidy black hair and green eyes.")
+    chat.characters = [_look_char("Harry", role="protagonist", sex="boy", build="small and skinny",
+                                  hair="untidy black", eyes="green")]
+    _update(client, book_id)
+    assert generator.calls == 2  # the one upgrade
+    assert "untidy black hair" in generator.prompts[-1]
+    assert _nodes(client, book_id)["Harry"]["portrait_url"] != first_url  # new version -> new URL
+
+    retrieval.read_more("Harry wore Dudley's old clothes, far too big for him.")
+    chat.characters = [_look_char("Harry", role="protagonist", sex="boy", build="small and skinny",
+                                  hair="untidy black", eyes="green", clothing="baggy old clothes")]
+    _update(client, book_id)
+    assert generator.calls == 2  # never again
+
+
+def test_portrait_from_a_real_description_is_never_upgraded(strict_env):
+    client, book_id, retrieval, chat, generator = strict_env
+    chat.characters = [_look_char("Harry", sex="boy", build="skinny", hair="black")]
+    _update(client, book_id)
+    retrieval.read_more("Harry had a thin face, knobbly knees and green eyes.")
+    chat.characters = [_look_char("Harry", sex="boy", build="skinny", hair="black", eyes="green",
+                                  distinctive="lightning scar")]
+    _update(client, book_id)
+    assert generator.calls == 1
+
+
+def test_failed_upgrade_keeps_the_old_picture_and_retries(strict_env):
+    client, book_id, retrieval, chat, generator = strict_env
+    chat.characters = [_look_char("Harry", role="protagonist", sex="boy")]
+    _update(client, book_id)
+    old_bytes = client.get(_nodes(client, book_id)["Harry"]["portrait_url"]).content
+
+    retrieval.read_more("Harry was small and skinny, with untidy black hair.")
+    chat.characters = [_look_char("Harry", role="protagonist", sex="boy", build="small", hair="untidy black")]
+    generator.fail_next = 1
+    _update(client, book_id)
+    node = _nodes(client, book_id)["Harry"]
+    assert node["portrait_status"] == "ready"  # still showing the old one
+    assert client.get(node["portrait_url"]).content == old_bytes
+
+    retrieval.read_more("Harry ran down the stairs.")
+    _update(client, book_id)
+    assert client.get(_nodes(client, book_id)["Harry"]["portrait_url"]).content != old_bytes  # retried, upgraded
+
+
+def test_legacy_placeholder_rows_are_recognised(strict_env):
+    """Portraits made before the flag existed (e.g. "not described directly")
+    are treated as placeholders and get their one upgrade."""
+    client, book_id, retrieval, chat, generator = strict_env
+    chat.characters = [_look_char("Harry", role="protagonist", sex="boy")]
+    _update(client, book_id)
+
+    from app.db import database
+    from app.models.character_portrait import CharacterPortrait
+
+    with database.SessionLocal() as db:
+        row = db.query(CharacterPortrait).filter_by(book_id=book_id).one()
+        row.placeholder, row.look_json, row.appearance = None, None, "not described directly"
+        db.commit()
+
+    retrieval.read_more("Harry was small and skinny, with untidy black hair.")
+    chat.characters = [_look_char("Harry", role="protagonist", sex="boy", build="small", hair="untidy black")]
+    _update(client, book_id)
+    assert generator.calls == 2
+
+
+def test_sync_reuses_portrait_for_a_titled_variant(strict_env):
+    client, book_id, *_ = strict_env
+    service = client.app.dependency_overrides[get_portrait_service]()
+    from app.db import database
+
+    with database.SessionLocal() as db:
+        first = service.sync(db, book_id, [_node_dict("char_illyrio_mopatis", "Illyrio Mopatis")])
+        assert len(first) == 1
+        again = service.sync(db, book_id, [_node_dict("char_magister_illyrio", "Magister Illyrio")])
+        assert again == []  # same person: no new portrait job
+        from app.repositories import character_portrait_repository as prepo
+
+        row = prepo.find_by_char_id(db, book_id, "char_magister_illyrio")
+        assert row is not None and row.char_id == "char_illyrio_mopatis"
+
+
+def _node_dict(char_id: str, name: str) -> dict:
+    return {"id": char_id, "name": name, "role": "minor", "appearance": None,
+            "look": {"type": "human", "sex": "man", "build": "fat", "facial_hair": "yellow beard"}}
+
+
+# ---- one shared, genre-neutral title list ------------------------------------
+
+from app.integrations.character_looks import ALL_TITLES  # noqa: E402
+from app.integrations.portraits import describe_messages  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("name", "sex"),
+    [("Madame Maxime", "woman"), ("Mistress Quickly", "woman"), ("Señora Lopez", "woman"), ("Senora Lopez", "woman"),
+     ("Monsieur Poirot", "man"), ("Professor Lupin", None), ("Inspector Lestrade", None), ("Doctor Watson", None)],
+)
+def test_titles_from_other_genres(name, sex):
+    assert sex_from_name(name) == sex
+
+
+def test_professional_titles_are_never_scrubbed_but_names_are():
+    prompt = build_portrait_prompt(
+        "a stern Professor in green robes, like Inspector Morse", names=["Professor McGonagall", "Inspector Morse"],
+    )
+    assert "Professor in green robes" in prompt
+    assert "McGonagall" not in prompt and "Morse" not in prompt
+
+
+def test_ai_prompts_use_neutral_title_examples():
+    """No Game of Thrones-only titles as examples in what we send the text model."""
+    extraction = cg._build_messages([_passage(CH1)])[1]["content"]
+    describe = describe_messages("Harry", [_passage(CH1)])[1]["content"]
+    for text in (extraction, describe):
+        for got_only in ("Septa", "Ser/", "Ser,", "Maester", "Khal"):
+            assert got_only not in text, got_only
+        assert "Mr" in text and "Lady" in text
+
+
+def test_flutter_initials_titles_match_the_shared_list():
+    """frontend/lib/models/character_map_item.dart mirrors ALL_TITLES."""
+    import re as _re
+
+    dart = (Path(__file__).resolve().parents[2] / "frontend/lib/models/character_map_item.dart").read_text()
+    block = dart.split("const titles = {", 1)[1].split("};", 1)[0]
+    dart_titles = set(_re.findall(r"'([a-z]+)'", block))
+    assert ALL_TITLES <= dart_titles

@@ -34,7 +34,14 @@ from app.integrations.interfaces import (
     RetrievalProvider,
     RetrievedPassage,
 )
-from app.integrations.character_looks import clean_setting, meaningful_appearance, merge_looks, normalize_look, render_look
+from app.integrations.character_looks import (
+    clean_setting,
+    meaningful_appearance,
+    merge_looks,
+    normalize_look,
+    render_look,
+    titled_variant,
+)
 from app.integrations.rag_retrieval import format_passages
 from app.rag.llm import ChatModel
 
@@ -95,7 +102,7 @@ def _build_messages(passages: list[RetrievedPassage], known_names: list[str] | N
         f"REQUIRED JSON SHAPE (replace every <placeholder> with real content): {_REQUIRED_SHAPE}\n"
         "Every evidence field must be an exact short quote (under 25 words) copied verbatim from "
         "the excerpts above. Each look describes how that character looks, from the excerpts only: always "
-        "fill sex (from pronouns, titles like Ser/Lord/Lady/Septa, or family words) and type, add approximate "
+        "fill sex (from pronouns, gendered titles like Mr/Mrs/Sir/Lady, or family words) and type, add approximate "
         "age when stated or clearly implied, and fill the other fields only with details the excerpts give "
         "(under 12 words each, otherwise \"\"). Describe only the character's own body and clothes: no horses, "
         "no objects they hold, no comparisons to other characters, never any names. The setting is one short "
@@ -331,6 +338,16 @@ def merge_graph(
             ]
             if len(candidates) == 1:
                 target = candidates[0]
+            elif not candidates:
+                # Same person under a title: "Magister Illyrio" ~ "Illyrio
+                # Mopatis", "Lady Arryn" ~ "Lysa Arryn" -- only when exactly
+                # one existing character fits and the sexes don't clash.
+                titled = [
+                    n for n in nodes
+                    if titled_variant(new["name"], new.get("look"), n["name"], n.get("look"))
+                ]
+                if len(titled) == 1:
+                    target = titled[0]
         if target is None:
             added = dict(new)
             nodes.append(added)

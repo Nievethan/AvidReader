@@ -22,6 +22,7 @@ portrait code can use it without import cycles.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 LOOK_FIELDS = (
     "type", "species", "sex", "age", "build", "hair", "eyes", "skin",
@@ -47,14 +48,50 @@ _SEX_WORDS = {
 }
 # Titles and family words that settle a character's sex when the extractor
 # didn't ("Ser Boros", "Septa Mordane", "Lady Arryn", "Old Nan" stays unknown).
-_FEMALE_TITLES = frozenset({
-    "lady", "queen", "princess", "septa", "mrs", "miss", "ms", "madam", "dame", "duchess", "countess",
-    "baroness", "khaleesi", "mother", "sister", "aunt", "grandmother", "wife", "daughter", "maid",
+# ---- titles: the ONE shared list (portraits.py and the Flutter initials
+# helper use it too). Genre-neutral: everyday, professional, military,
+# religious, noble and foreign honorifics, plus a few common fantasy ones.
+# Lower-case; a title never identifies anyone, so it's never scrubbed from
+# prompts, and a gendered one settles a character's sex when the text model
+# didn't. Keep frontend/lib/models/character_map_item.dart in sync.
+FEMALE_TITLES = frozenset({
+    # everyday / foreign
+    "mrs", "miss", "ms", "madam", "madame", "mademoiselle", "mme", "mlle", "mistress", "dame",
+    "senora", "senorita", "signora", "frau", "fraulein",
+    # nobility / royalty
+    "lady", "queen", "princess", "duchess", "countess", "baroness", "marchioness", "viscountess",
+    "empress", "khaleesi",
+    # religious
+    "sister", "abbess", "nun", "priestess", "septa",
+    # family / roles used as titles
+    "mother", "aunt", "auntie", "grandmother", "granny", "grandma", "nana", "wife", "daughter", "maid",
 })
-_MALE_TITLES = frozenset({
-    "ser", "sir", "lord", "king", "prince", "maester", "septon", "khal", "mr", "magister", "duke", "count",
-    "baron", "father", "brother", "uncle", "grandfather", "husband", "son",
+MALE_TITLES = frozenset({
+    # everyday / foreign
+    "mr", "mister", "master", "monsieur", "senor", "signor", "herr",
+    # nobility / royalty / knighthood
+    "sir", "ser", "lord", "king", "prince", "duke", "count", "earl", "baron", "marquis", "marquess",
+    "viscount", "emperor", "khal", "magister",
+    # religious / scholarly orders that are men-only in their stories
+    "father", "brother", "friar", "monk", "abbot", "septon", "maester",
+    # family / roles used as titles
+    "uncle", "grandfather", "grandpa", "husband", "son",
 })
+# No sex implied: professional, military, official, academic, religious.
+NEUTRAL_TITLES = frozenset({
+    "dr", "doctor", "professor", "prof", "headmaster", "headmistress", "teacher", "nurse",
+    "captain", "capt", "commander", "general", "colonel", "major", "lieutenant", "lt", "sergeant", "sgt",
+    "corporal", "private", "admiral", "officer", "constable", "inspector", "detective", "agent",
+    "judge", "justice", "mayor", "governor", "president", "minister", "chancellor", "senator", "ambassador",
+    "chief", "elder", "reverend", "rev", "pastor", "vicar", "bishop", "cardinal", "pope", "rabbi", "imam",
+    "priest", "deacon", "knight", "squire", "saint", "st",
+})
+# Deliberately NOT titles: "wizard", "witch" and similar are nouns that also
+# appear in book titles ("The Wizard of Oz") and must stay scrubbable.
+ALL_TITLES = FEMALE_TITLES | MALE_TITLES | NEUTRAL_TITLES
+# Backwards-compatible private names used below.
+_FEMALE_TITLES = FEMALE_TITLES
+_MALE_TITLES = MALE_TITLES
 
 _HORSE = re.compile(
     r"\b(horses?|pon(?:y|ies)|garrons?|mounts?|steeds?|mares?|stallions?|geldings?|saddles?|"
@@ -143,8 +180,13 @@ def merge_looks(primary: dict | None, fallback: dict | None) -> dict | None:
     return merged
 
 
+def _ascii(text: str) -> str:
+    """ "Señora" -> "Senora", so accented titles match the list."""
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+
+
 def sex_from_name(name: str | None) -> str | None:
-    words = {w.casefold().strip(".") for w in re.findall(r"[A-Za-z.]+", name or "")}
+    words = {w.casefold().strip(".") for w in re.findall(r"[A-Za-z.]+", _ascii(name or ""))}
     if words & _FEMALE_TITLES:
         return "woman"
     if words & _MALE_TITLES:
@@ -287,3 +329,65 @@ def build_subject(look: dict | None, appearance: str | None, name: str | None) -
     if details and details[0].startswith("with ") and " with " not in head:
         subject += " " + details.pop(0)
     return ", ".join([subject, *details])[:400]
+
+
+# ---- which characters get a portrait (D14) --------------------------------
+
+# Fields that make a face distinguishable. Sex alone ("a man") does not.
+DETAIL_FIELDS = ("age", "build", "hair", "eyes", "skin", "facial_hair", "clothing", "distinctive", "species")
+_MAIN_ROLES = re.compile(
+    r"\b(protagonist|antagonist|deuteragonist|main|major|lead|hero|heroine|villain|narrator)\b", re.IGNORECASE
+)
+_DETAIL_SPLIT = re.compile(r",|;|\bwith\b|\band\b|\bwearing\b", re.IGNORECASE)
+
+
+def detail_count(look: dict | None, appearance: str | None = None) -> int:
+    """How many concrete visual details are known: profile fields, or the
+    pieces of a free-text appearance when there is no profile."""
+    count = sum(1 for f in DETAIL_FIELDS if meaningful_appearance((look or {}).get(f)))
+    if count == 0:
+        text = meaningful_appearance(appearance)
+        if text:
+            count = sum(1 for part in _DETAIL_SPLIT.split(text) if len(part.strip()) > 2)
+    return count
+
+
+def is_main_role(role: str | None) -> bool:
+    return bool(role and _MAIN_ROLES.search(role))
+
+
+# ---- the same person under two names (D15) --------------------------------
+
+_TITLE_WORDS = ALL_TITLES | {"old", "young", "little", "big", "the", "of"}
+_NAME_WORD = re.compile(r"[a-z0-9]+")
+
+
+def title_free_words(name: str) -> frozenset[str]:
+    """Name words without titles: "Magister Illyrio" -> {"illyrio"}."""
+    words = _NAME_WORD.findall(_ascii(name or "").casefold().replace("'s", ""))
+    return frozenset(w for w in words if w not in _TITLE_WORDS)
+
+
+def _sex_of(name: str, look: dict | None) -> str | None:
+    sex = (look or {}).get("sex")
+    if sex in {"man", "boy"}:
+        return "man"
+    if sex in {"woman", "girl"}:
+        return "woman"
+    return sex_from_name(name)
+
+
+def titled_variant(name_a: str, look_a: dict | None, name_b: str, look_b: dict | None) -> bool:
+    """True when two names could be one person once titles are ignored:
+    "Magister Illyrio" ~ "Illyrio Mopatis", "Lady Arryn" ~ "Lysa Arryn".
+    Needs a title on at least one side (plain name variants are handled
+    elsewhere) and never pairs a man with a woman ("Mr. Dursley" vs
+    "Mrs. Dursley"). Callers must still require exactly one candidate."""
+    a, b = title_free_words(name_a), title_free_words(name_b)
+    if not a or not b or not (a <= b or b <= a):
+        return False
+    if title_free_words(name_a) == frozenset(_NAME_WORD.findall(name_a.casefold())) and \
+            title_free_words(name_b) == frozenset(_NAME_WORD.findall(name_b.casefold())):
+        return False  # no titles anywhere: not this rule's job
+    sex_a, sex_b = _sex_of(name_a, look_a), _sex_of(name_b, look_b)
+    return not (sex_a and sex_b and sex_a != sex_b)

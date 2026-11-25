@@ -34,6 +34,7 @@ from typing import Protocol
 
 from app.integrations.character_graph import _parse_json
 from app.integrations.character_looks import (
+    ALL_TITLES,
     FALLBACK_SUBJECT,
     build_subject,
     clean_setting,
@@ -52,20 +53,34 @@ __all__ = [
     "build_portrait_prompt", "is_nsfw_rejection", "meaningful_appearance", "scrub_names",
 ]
 
-_PROMPT_TEMPLATE = (
-    "Photorealistic portrait photograph of {subject}.{setting} {framing}, "
-    "soft natural window light, shallow depth of field, 85mm lens, plain muted background, "
-    "detailed skin texture, realistic. Not a celebrity. No text, no watermark."
-)
+# Portrait styles (PORTRAIT_STYLE). No studio cues ("window light", "plain
+# background", "85mm lens" pushed Flux towards modern stock photos): the
+# background comes from the book's setting. Wording is positive only --
+# flux-schnell mostly ignores "no X" -- so "clean frame" instead of "no
+# watermark", "an unknown actor" instead of "not a celebrity", and clothing
+# that "fits the story" instead of "no modern clothes".
+PORTRAIT_STYLES = {
+    "cinematic": {
+        "human": (
+            "Cinematic film still from a period drama: {subject}{clothing}, played by an unknown actor. "
+            "Head-and-shoulders shot, looking toward the camera, {background}, natural light, "
+            "realistic detail, clean frame."
+        ),
+        "animal": "Wildlife film still: {subject}, {background}, natural light, sharp detailed fur, realistic, clean frame.",
+    },
+    "painted": {
+        "human": (
+            "Oil-painted fantasy book portrait of {subject}{clothing}. Head and shoulders, looking toward the "
+            "viewer, {background}, warm candlelight, rich brushwork, detailed, clean frame."
+        ),
+        "animal": "Oil painting of {subject}, {background}, warm light, rich brushwork, detailed fur, clean frame.",
+    },
+}
+DEFAULT_STYLE = "cinematic"
+_STORY_CLOTHING = ", wearing clothing that fits the story's time and place"
 # Softened retry for Cloudflare's NSFW false positives: says the subject is
-# dressed and drops body/skin wording that pushes the filter's score up.
-_SAFE_PROMPT_TEMPLATE = (
-    "Photorealistic portrait photograph of {subject}, fully clothed in period costume.{setting} "
-    "{framing}, soft natural light, plain muted background, "
-    "realistic. Not a celebrity. No text, no watermark."
-)
-_HUMAN_FRAMING = "Head and shoulders, looking at the camera"
-_ANIMAL_FRAMING = "Close-up portrait of the animal, looking at the camera"
+# dressed (and the subject's body/skin wording is dropped, below).
+_SAFE_CLOTHING = ", fully clothed in period costume"
 # Words dropped from the subject on the softened retry.
 _SAFE_DROP_WORDS = re.compile(
     r"\b(beautiful|gorgeous|pretty|attractive|sexy|seductive|alluring|voluptuous|curvy|"
@@ -76,16 +91,14 @@ _SAFE_DROP_WORDS = re.compile(
 # Words in a character's "name" that are titles, honorifics or plain
 # English: never scrubbed from prompts, since they identify nobody and
 # removing them mangles the description ("Old Nan" must not delete "old",
-# "Ser Boros" must not delete "ser"). Lower-case name words are skipped too.
-_KEEP_WORDS = frozenset(
+# "Sir Boros" must not delete "sir"). Lower-case name words are skipped too.
+# Titles come from the one shared list in character_looks.py.
+_KEEP_WORDS = ALL_TITLES | frozenset(
     {
-        "mr", "mrs", "ms", "miss", "dr", "sir", "ser", "lady", "lord", "the", "of", "and", "von", "van", "de",
+        "the", "of", "and", "von", "van", "de", "la", "le", "du", "da", "di", "del", "bin", "ibn",
         "a", "an", "old", "young", "little", "big", "great", "elder", "younger",
-        "king", "queen", "prince", "princess", "duke", "duchess", "earl", "count", "countess", "baron",
-        "knight", "maester", "septa", "septon", "magister", "khal", "khaleesi", "captain", "commander",
-        "father", "mother", "brother", "sister", "uncle", "aunt", "grandmother", "grandfather",
         "man", "woman", "men", "women", "boy", "girl", "child", "baby", "lad", "lass",
-        "guard", "soldier", "servant", "killer", "stranger", "rider", "priest", "nurse", "cook",
+        "guard", "soldier", "servant", "killer", "stranger", "rider", "cook",
     }
 )
 # A "character" whose name starts with one of these is a description, not a
@@ -158,21 +171,33 @@ def build_portrait_prompt(
     look: dict | None = None,
     setting: str | None = None,
     name: str | None = None,
+    style: str = DEFAULT_STYLE,
 ) -> str:
     """The image prompt. The subject comes from the structured `look` when
     there is one (falling back to the free-text `appearance`), `name` only
     supplies a sex hint from titles ("Ser", "Lady") and is never written into
-    the prompt. `safe=True` is the softened retry after an NSFW false positive."""
+    the prompt. `style` is "cinematic" or "painted". `safe=True` is the
+    softened retry after an NSFW false positive."""
     subject = scrub_names(build_subject(look, appearance, name), names, book_title)
     if safe:
         subject = re.sub(r"\s{2,}", " ", _SAFE_DROP_WORDS.sub("", subject)).strip(" ,;:")
     if len(subject) < 3:
         subject = FALLBACK_SUBJECT
+    subject = subject.rstrip(".")
     place = clean_setting(scrub_names(setting or "", names, book_title))
-    setting_clause = f" Setting: {place.rstrip('.')}." if place else ""
-    framing = _ANIMAL_FRAMING if (look or {}).get("type") == "animal" else _HUMAN_FRAMING
-    template = _SAFE_PROMPT_TEMPLATE if safe else _PROMPT_TEMPLATE
-    return template.format(subject=subject.rstrip("."), setting=setting_clause, framing=framing)
+    place = place.rstrip(".") if place else None
+    templates = PORTRAIT_STYLES.get(style, PORTRAIT_STYLES[DEFAULT_STYLE])
+    if (look or {}).get("type") == "animal":
+        background = f"in a setting of {place}" if place else "in its natural surroundings"
+        return templates["animal"].format(subject=subject, background=background)
+    if safe:
+        clothing = _SAFE_CLOTHING
+    elif re.search(r"\b(wearing|dressed|clad|in (?:a|an|his|her)\b)", subject, re.IGNORECASE):
+        clothing = ""  # the profile already says what they wear
+    else:
+        clothing = _STORY_CLOTHING
+    background = f"softly blurred background of {place}" if place else "softly blurred background that fits the story"
+    return templates["human"].format(subject=subject, clothing=clothing, background=background)
 
 
 # ---- dedicated description pass (one text-model call per new character) ----
@@ -202,8 +227,8 @@ def describe_messages(name: str, passages: list[RetrievedPassage]) -> list[dict]
         f'TASK: Describe how the character called "{name}" looks, using ONLY these excerpts.\n'
         f"REQUIRED JSON SHAPE (replace every <placeholder>; use \"\" for anything the excerpts don't show): "
         f"{_LOOK_SHAPE}\n"
-        "Rules: infer sex from pronouns (he/she), titles (Ser, Lord, King, Lady, Queen, Septa...) and family "
-        "words (son, mother...) even when looks aren't described. Infer approximate age from stated ages or "
+        "Rules: infer sex from pronouns (he/she), gendered titles (Mr, Mrs, Sir, Lady, King, Queen...) and "
+        "family words (son, mother...) even when looks aren't described. Infer approximate age from stated ages or "
         "roles (child, squire, old). Describe only the character's own body and clothes -- no horses, no "
         "objects they hold, no comparisons to other characters -- and never write any names. Keep each value "
         "under 12 words. Inside JSON strings, write double quotation marks as single quotes ('). Output JSON only."

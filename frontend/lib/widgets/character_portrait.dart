@@ -7,7 +7,8 @@ import '../theme/classic_lit_theme.dart';
 /// A character's AI portrait, or a fallback:
 /// - ready   -> the generated image (falls back to the icon if it fails to load)
 /// - pending -> a soft pulsing placeholder while it's being painted
-/// - none / failed -> the role icon (the pre-portrait behaviour)
+/// - waiting -> the character's initials (not described enough to paint yet)
+/// - none / failed / skipped -> the role icon (the pre-portrait behaviour)
 class CharacterPortrait extends StatelessWidget {
   final CharacterNode node;
   final double size;
@@ -48,6 +49,21 @@ class CharacterPortrait extends StatelessWidget {
       );
     } else if (node.portraitPending) {
       child = _PulsingPlaceholder(size: size, icon: fallbackIcon);
+    } else if (node.portraitWaiting) {
+      child = Container(
+        color: ClassicLitTheme.linenCard,
+        alignment: Alignment.center,
+        child: Text(
+          node.initials,
+          style: TextStyle(
+            fontSize: size * 0.36,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+            color: iconColor,
+            fontFamily: ClassicLitTheme.serifFont,
+          ),
+        ),
+      );
     } else {
       return SizedBox(
         width: size,

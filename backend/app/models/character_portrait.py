@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import Boolean, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -34,7 +34,13 @@ class CharacterPortrait(Base):
     prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # pending | ready | failed (retried on next Update) | skipped (safety filter; never retried)
+    # | waiting (too little description yet -- no image, no cost; painted once the book describes them)
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    # Painted from too little detail (placeholder) -> may be repainted ONCE when a
+    # later chapter describes the character; `upgraded` records that it happened.
+    # NULL = row made before these flags existed (worked out from the saved look).
+    placeholder: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    upgraded: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

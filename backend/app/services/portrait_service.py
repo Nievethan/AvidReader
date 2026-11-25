@@ -8,6 +8,12 @@ Rules (see docs/CHARACTER_PORTRAITS_PLAN.md):
 - Name variants ("Dudley" -> "Dudley Dursley") reuse the same portrait, but
   only when exactly one existing portrait matches; ambiguity -> new portrait.
 - Only portraits that never got an image (failed / interrupted) are retried.
+- Characters with too little description (fewer than `min_details` concrete
+  details and not a main character) are "waiting": no image and no cost, the
+  UI shows their initials, and they're painted once the book describes them.
+- A portrait painted from too little detail (a main character, or one made
+  before these rules) is a placeholder: it is repainted ONCE when a later
+  chapter describes the character. Portraits from real descriptions never change.
 """
 from __future__ import annotations
 
@@ -21,9 +27,21 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.db import database
-from app.integrations.character_looks import merge_looks
+from app.integrations.character_looks import (
+    detail_count,
+    is_main_role,
+    meaningful_appearance,
+    merge_looks,
+    titled_variant,
+)
 from app.integrations.interfaces import ReadingBoundary
-from app.integrations.portraits import CharacterDescriber, PortraitGenerator, build_portrait_prompt, is_nsfw_rejection
+from app.integrations.portraits import (
+    DEFAULT_STYLE,
+    CharacterDescriber,
+    PortraitGenerator,
+    build_portrait_prompt,
+    is_nsfw_rejection,
+)
 from app.models.character_portrait import CharacterPortrait
 from app.repositories import character_portrait_repository as repo
 from app.schemas.character_map import CharacterNode
@@ -61,6 +79,7 @@ class PortraitJob:
     look: dict | None = None  # structured profile from the character map
     setting: str | None = None  # the book's era/place phrase
     boundary: ReadingBoundary | None = None  # reader's position, for the description pass
+    upgrade: bool = False  # repainting a placeholder: keep the old picture if this fails
 
 
 class PortraitService:
@@ -71,8 +90,14 @@ class PortraitService:
         portraits_dir: Path,
         concurrency: int = 2,
         describer: CharacterDescriber | None = None,
+        style: str = DEFAULT_STYLE,
+        min_details: int = 2,
     ) -> None:
         self.generator = generator
+        self.style = style
+        # Below this many concrete details (and not a main character) a
+        # character waits for a description instead of getting a random face.
+        self.min_details = max(0, min_details)
         # Optional: one text-model call per new character to describe them from
         # every passage read so far (None = use the character map's profile only).
         self.describer = describer
@@ -128,6 +153,13 @@ class PortraitService:
                 for p in portraits
                 if p.char_id not in claimed and any(_is_name_variant(node_words, s) for s in _portrait_word_sets(p))
             ]
+            if not candidates:
+                # Same person under a title ("Magister Illyrio" ~ "Illyrio Mopatis").
+                candidates = [
+                    p for p in portraits
+                    if p.char_id not in claimed
+                    and titled_variant(node.get("name") or "", node.get("look"), p.name, repo.look(p))
+                ]
             if len(candidates) == 1:
                 portrait = candidates[0]
                 repo.add_alias(db, portrait, node["id"])
@@ -140,19 +172,33 @@ class PortraitService:
             portrait = matched.get(node["id"])
             appearance = node.get("appearance")
             look = node.get("look") if isinstance(node.get("look"), dict) else None
+            described = detail_count(look, appearance) >= self.min_details
+            paintable = described or is_main_role(node.get("role"))
+            upgrade = False
             if portrait is None:
                 portrait = repo.create_pending(
-                    db, book_id, node["id"], name=node["name"], appearance=appearance, look=look
+                    db, book_id, node["id"], name=node["name"], appearance=appearance, look=look,
+                    status="pending" if paintable else "waiting",
                 )
                 portraits.append(portrait)
-            elif portrait.status == "ready":
-                continue  # keep the existing picture -- never regenerate
-            elif portrait.status == "skipped":
-                continue  # the safety filter rejected it twice; retrying won't help
+                if not paintable:
+                    continue  # no face to draw yet: initials in the UI, no cost
             elif (book_id, portrait.char_id) in self._active:
                 continue  # already being generated
+            elif portrait.status == "ready":
+                # Keep the existing picture -- unless it's a placeholder and the
+                # book has now described them: repaint it, once.
+                if not (described and self._is_placeholder(portrait) and not portrait.upgraded):
+                    continue
+                upgrade = True
+                repo.mark_pending(db, portrait, appearance=appearance, look=look)
+            elif portrait.status == "skipped":
+                continue  # the safety filter rejected it twice; retrying won't help
+            elif portrait.status == "waiting" and not paintable:
+                repo.update_description(db, portrait, appearance=appearance, look=look)
+                continue  # still too little to go on
             else:
-                # failed, or pending from a job that died with the process
+                # waiting -> now described, failed, or pending from a job that died with the process
                 repo.mark_pending(db, portrait, appearance=appearance, look=look)
             key = (book_id, portrait.char_id)
             if key in self._active:
@@ -169,9 +215,17 @@ class PortraitService:
                     look=repo.look(portrait),
                     setting=setting,
                     boundary=boundary,
+                    upgrade=upgrade,
                 )
             )
         return jobs
+
+    def _is_placeholder(self, portrait: CharacterPortrait) -> bool:
+        """Painted from too little detail? Rows made before the flag existed
+        are judged from what they were painted from."""
+        if portrait.placeholder is not None:
+            return bool(portrait.placeholder)
+        return detail_count(repo.look(portrait), meaningful_appearance(portrait.appearance)) < max(1, self.min_details)
 
     # ---- generation ---------------------------------------------------
 
@@ -217,7 +271,11 @@ class PortraitService:
             with database.SessionLocal() as db:
                 portrait = repo.get(db, job.book_id, job.char_id)
                 if portrait is not None:  # book may have been deleted meanwhile
-                    repo.mark_ready(db, portrait, image_path=str(path), prompt=prompt, look=look)
+                    repo.mark_ready(
+                        db, portrait, image_path=str(path), prompt=prompt, look=look,
+                        placeholder=detail_count(look, job.appearance) < max(1, self.min_details),
+                        upgraded=True if job.upgrade else None,
+                    )
         except Exception as exc:
             logger.warning("Portrait generation failed for %s/%s: %s", job.book_id, job.char_id, exc)
             # Rejected by the safety filter even after softening: mark it
@@ -227,7 +285,11 @@ class PortraitService:
             try:
                 with database.SessionLocal() as db:
                     portrait = repo.get(db, job.book_id, job.char_id)
-                    if portrait is not None:
+                    if portrait is not None and job.upgrade:
+                        # The old picture is still on disk: keep showing it. Try the
+                        # upgrade again next Update, unless the safety filter refused.
+                        repo.restore_ready(db, portrait, error=f"{type(exc).__name__}: {exc}", upgraded=skipped)
+                    elif portrait is not None:
                         repo.mark_failed(
                             db, portrait, error=f"{type(exc).__name__}: {exc}", prompt=prompt,
                             status="skipped" if skipped else "failed",
@@ -237,11 +299,10 @@ class PortraitService:
         finally:
             self._active.discard(key)
 
-    @staticmethod
-    def _prompt(job: PortraitJob, look: dict | None, *, safe: bool = False) -> str:
+    def _prompt(self, job: PortraitJob, look: dict | None, *, safe: bool = False) -> str:
         return build_portrait_prompt(
             job.appearance, names=job.names, book_title=job.book_title, safe=safe,
-            look=look, setting=job.setting, name=job.name,
+            look=look, setting=job.setting, name=job.name, style=self.style,
         )
 
     def _image_path(self, book_id: str, char_id: str) -> Path:
@@ -265,7 +326,7 @@ class PortraitService:
                 continue
             node.portrait_status = portrait.status
             if portrait.status == "ready" and portrait.image_path:
-                version = int(portrait.updated_at.timestamp()) if portrait.updated_at else 0
+                version = int(portrait.updated_at.timestamp() * 1000) if portrait.updated_at else 0  # ms: a repaint must change the URL
                 node.portrait_url = f"/api/v1/books/{book_id}/characters/{node.id}/portrait?v={version}"
         return nodes
 

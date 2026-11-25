@@ -41,11 +41,20 @@ def find_by_char_id(db: Session, book_id: str, char_id: str) -> CharacterPortrai
 
 
 def create_pending(
-    db: Session, book_id: str, char_id: str, *, name: str, appearance: str | None, look: dict | None = None
+    db: Session,
+    book_id: str,
+    char_id: str,
+    *,
+    name: str,
+    appearance: str | None,
+    look: dict | None = None,
+    status: str = "pending",
 ) -> CharacterPortrait:
+    """`status="waiting"` records a character with too little description
+    to paint yet (no job is queued for it)."""
     portrait = CharacterPortrait(
-        book_id=book_id, char_id=char_id, name=name, appearance=appearance, status="pending", aliases_json="[]",
-        look_json=json.dumps(look) if look else None,
+        book_id=book_id, char_id=char_id, name=name, appearance=appearance, status=status, aliases_json="[]",
+        look_json=json.dumps(look) if look else None, upgraded=False,
     )
     db.add(portrait)
     db.commit()
@@ -74,11 +83,31 @@ def mark_pending(
     db.commit()
 
 
+def update_description(db: Session, portrait: CharacterPortrait, *, appearance: str | None, look: dict | None) -> None:
+    """Keeps a waiting portrait's description current (no status change)."""
+    if appearance:
+        portrait.appearance = appearance
+    if look:
+        portrait.look_json = json.dumps(look)
+    db.commit()
+
+
 def mark_ready(
-    db: Session, portrait: CharacterPortrait, *, image_path: str, prompt: str, look: dict | None = None
+    db: Session,
+    portrait: CharacterPortrait,
+    *,
+    image_path: str,
+    prompt: str,
+    look: dict | None = None,
+    placeholder: bool | None = None,
+    upgraded: bool | None = None,
 ) -> None:
     if look:
         portrait.look_json = json.dumps(look)  # the profile the picture was actually painted from
+    if placeholder is not None:
+        portrait.placeholder = placeholder
+    if upgraded is not None:
+        portrait.upgraded = upgraded
     portrait.status = "ready"
     portrait.image_path = image_path
     portrait.prompt = prompt
@@ -94,6 +123,14 @@ def mark_failed(
     portrait.error = error[:500]
     if prompt is not None:
         portrait.prompt = prompt
+    db.commit()
+
+
+def restore_ready(db: Session, portrait: CharacterPortrait, *, error: str, upgraded: bool) -> None:
+    """A placeholder upgrade failed: keep showing the old picture."""
+    portrait.status = "ready"
+    portrait.error = error[:500]
+    portrait.upgraded = upgraded
     db.commit()
 
 

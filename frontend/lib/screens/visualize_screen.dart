@@ -575,7 +575,8 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
                 key: ValueKey('hero-${currentCharacter.id}'),
                 node: currentCharacter,
                 size: currentCharacter.hasPortrait ||
-                        currentCharacter.portraitPending
+                        currentCharacter.portraitPending ||
+                        currentCharacter.portraitWaiting
                     ? 132
                     : 60,
                 fallbackIcon: _iconForRole(currentCharacter.role),
@@ -587,6 +588,18 @@ class _VisualizeScreenState extends State<VisualizeScreen> {
                 const SizedBox(height: 6),
                 const Text(
                   'Painting portrait…',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontStyle: FontStyle.italic,
+                    color: ClassicLitTheme.inkSecondary,
+                  ),
+                ),
+              ],
+              if (currentCharacter.portraitWaiting) ...[
+                const SizedBox(height: 6),
+                const Text(
+                  'Not described yet — portrait comes once the book describes them',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 10.5,
                     fontStyle: FontStyle.italic,

@@ -172,6 +172,8 @@ def get_portrait_service() -> PortraitService:
         portraits_dir=settings.portraits_dir,
         concurrency=settings.portrait_concurrency,
         describer=describer,
+        style=settings.portrait_style,
+        min_details=settings.portrait_min_details,
     )
 
 

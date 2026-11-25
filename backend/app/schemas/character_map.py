@@ -16,7 +16,7 @@ class CharacterNode(BaseModel):
     # Structured look profile (sex, age, hair, clothing...) -- see character_looks.py.
     look: dict | None = None
     # Filled from the character_portraits table at response time.
-    portrait_status: str = "none"  # "none" | "pending" | "ready" | "failed" | "skipped"
+    portrait_status: str = "none"  # "none" | "pending" | "ready" | "failed" | "skipped" | "waiting"
     portrait_url: str | None = None
 
 
