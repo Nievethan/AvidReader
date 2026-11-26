@@ -28,4 +28,6 @@ class CharacterGraphCache(Base):
     boundary_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # NULL = saved before incremental extraction existed -> next Update rebuilds.
     processed_through_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Name-free era/place phrase for portrait prompts, extracted once per book.
+    setting: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

@@ -67,7 +67,8 @@ async def generate_relationships(
     response = await CharacterMapService().generate(db, book_id, boundary, boundary_label=label, provider=provider)
     if response.status == "ready":
         jobs = portrait_service.sync(
-            db, book_id, [node.model_dump() for node in response.nodes], book_title=book.title
+            db, book_id, [node.model_dump() for node in response.nodes], book_title=book.title,
+            setting=response.setting, boundary=boundary,
         )
         portrait_service.attach(db, book_id, response.nodes)
         if jobs:

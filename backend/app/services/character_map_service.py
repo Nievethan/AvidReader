@@ -27,6 +27,7 @@ class CharacterMapService:
             edges=[CharacterEdge(**e) for e in json.loads(cache.edges_json)],
             generated_at=cache.generated_at,
             boundary_label=cache.boundary_label,
+            setting=cache.setting,
         )
 
     async def generate(
@@ -68,4 +69,5 @@ class CharacterMapService:
             edges=[CharacterEdge(**e) for e in result.edges],
             generated_at=cache.generated_at,
             boundary_label=label,
+            setting=cache.setting,
         )

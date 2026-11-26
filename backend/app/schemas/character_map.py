@@ -13,8 +13,10 @@ class CharacterNode(BaseModel):
     first_seen_chunk_id: str | None = None
     # Visual description extracted from the text read so far (no names).
     appearance: str | None = None
+    # Structured look profile (sex, age, hair, clothing...) -- see character_looks.py.
+    look: dict | None = None
     # Filled from the character_portraits table at response time.
-    portrait_status: str = "none"  # "none" | "pending" | "ready" | "failed"
+    portrait_status: str = "none"  # "none" | "pending" | "ready" | "failed" | "skipped" | "waiting"
     portrait_url: str | None = None
 
 
@@ -36,3 +38,5 @@ class RelationshipsResponse(BaseModel):
     edges: list[CharacterEdge] = Field(default_factory=list)
     generated_at: datetime | None = None
     boundary_label: str | None = None
+    # Name-free era/place phrase used in portrait prompts.
+    setting: str | None = None

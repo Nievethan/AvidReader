@@ -23,6 +23,46 @@ class CharacterNode {
 
   bool get hasPortrait => portraitStatus == 'ready' && portraitUrl != null;
   bool get portraitPending => portraitStatus == 'pending';
+  // Too little description to paint yet: shown as initials until the book
+  // describes them (no AI cost).
+  bool get portraitWaiting => portraitStatus == 'waiting';
+
+  /// "Ser Waymar Royce" -> "WR", "Hodor" -> "H" (titles skipped).
+  String get initials {
+    // Mirrors ALL_TITLES in backend/app/integrations/character_looks.py
+    // (checked by test_flutter_initials_titles_match_the_shared_list).
+    const titles = {
+      'a', 'abbess', 'abbot', 'admiral', 'agent', 'ambassador', 'an', 'aunt',
+      'auntie', 'baron', 'baroness', 'big', 'bishop', 'brother', 'capt',
+      'captain', 'cardinal', 'chancellor', 'chief', 'colonel', 'commander',
+      'constable', 'corporal', 'count', 'countess', 'dame', 'daughter',
+      'deacon', 'detective', 'doctor', 'dr', 'duchess', 'duke', 'earl',
+      'elder', 'emperor', 'empress', 'father', 'frau', 'fraulein', 'friar',
+      'general', 'governor', 'grandfather', 'grandma', 'grandmother',
+      'grandpa', 'granny', 'headmaster', 'headmistress', 'herr', 'husband',
+      'imam', 'inspector', 'judge', 'justice', 'khal', 'khaleesi', 'king',
+      'knight', 'lady', 'lieutenant', 'little', 'lord', 'lt', 'madam',
+      'madame', 'mademoiselle', 'maester', 'magister', 'maid', 'major',
+      'marchioness', 'marquess', 'marquis', 'master', 'mayor', 'minister',
+      'miss', 'mister', 'mistress', 'mlle', 'mme', 'monk', 'monsieur',
+      'mother', 'mr', 'mrs', 'ms', 'nana', 'nun', 'nurse', 'of', 'officer',
+      'old', 'pastor', 'pope', 'president', 'priest', 'priestess', 'prince',
+      'princess', 'private', 'prof', 'professor', 'queen', 'rabbi', 'rev',
+      'reverend', 'saint', 'senator', 'senor', 'senora', 'senorita', 'septa',
+      'septon', 'ser', 'sergeant', 'sgt', 'signor', 'signora', 'sir',
+      'sister', 'son', 'squire', 'st', 'teacher', 'the', 'uncle', 'vicar',
+      'viscount', 'viscountess', 'wife', 'young',
+    };
+    final words = name
+        .split(RegExp(r"[^A-Za-z']+"))
+        .where((w) => w.isNotEmpty && !titles.contains(w.toLowerCase()))
+        .toList();
+    final picked = words.isEmpty ? [name] : words;
+    final letters = picked.length == 1
+        ? picked.first.substring(0, 1)
+        : '${picked.first[0]}${picked.last[0]}';
+    return letters.toUpperCase();
+  }
 
   factory CharacterNode.fromJson(Map<String, dynamic> json) => CharacterNode(
         id: json['id'] as String,

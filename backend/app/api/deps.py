@@ -11,6 +11,7 @@ from app.integrations.cloudflare import CloudflareClient
 from app.integrations.grounded_answer import GroundedAnswerProvider
 from app.integrations.interfaces import CharacterGraphProvider
 from app.integrations.portraits import (
+    CharacterDescriber,
     CloudflarePortraitGenerator,
     NotAvailablePortraitGenerator,
     PortraitGenerator,
@@ -156,10 +157,23 @@ def get_portrait_generator() -> PortraitGenerator:
 @lru_cache
 def get_portrait_service() -> PortraitService:
     settings = get_settings()
+    client = get_cloudflare_client()
+    describer = None
+    if client is not None and settings.portrait_describe_pass:
+        describer = CharacterDescriber(
+            chat_model=CloudflareChatModel(
+                client, settings.cloudflare_text_model, timeout=settings.character_map_timeout_seconds
+            ),
+            retrieval_provider=get_retrieval_provider(),
+            max_chars=settings.portrait_describe_max_chars,
+        )
     return PortraitService(
         generator=get_portrait_generator(),
         portraits_dir=settings.portraits_dir,
         concurrency=settings.portrait_concurrency,
+        describer=describer,
+        style=settings.portrait_style,
+        min_details=settings.portrait_min_details,
     )
 
 

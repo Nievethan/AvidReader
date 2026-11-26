@@ -34,6 +34,14 @@ from app.integrations.interfaces import (
     RetrievalProvider,
     RetrievedPassage,
 )
+from app.integrations.character_looks import (
+    clean_setting,
+    meaningful_appearance,
+    merge_looks,
+    normalize_look,
+    render_look,
+    titled_variant,
+)
 from app.integrations.rag_retrieval import format_passages
 from app.rag.llm import ChatModel
 
@@ -58,13 +66,11 @@ NO_CHARACTERS_MESSAGE = "No characters found yet in what you've read."
 # Placeholders only: a realistic example (e.g. from a famous book) gets
 # copied into the output as if it were extracted from the excerpts.
 _REQUIRED_SHAPE = (
-    '{"characters":[{"name":"<name as written in the excerpts>","traits":["<trait>"],'
+    '{"setting":"<era and kind of place, e.g. the period, landscape and clothing style, no names>",'
+    '"characters":[{"name":"<name as written in the excerpts>","traits":["<trait>"],'
     '"description":"<who they are, from the excerpts>","role":"<protagonist|antagonist|ally|family|minor|...>",'
-    '"appearance":"<how they look, from the excerpts, no names>"}],'
-    '"relationships":[{"source":"<character name>","target":"<character name>","relationship":"<one word>",'
-    '"label":"<one short sentence>","evidence":"<exact short quote from the excerpts>"}]}'
-    '{"characters":[{"name":"<name as written in the excerpts>","traits":["<trait>"],'
-    '"description":"<who they are, from the excerpts>","role":"<protagonist|antagonist|ally|family|minor|...>"}],'
+    '"look":{"type":"<human|animal>","species":"<only for animals>","sex":"<man|woman|boy|girl>",'
+    '"age":"<approximate age>","build":"","hair":"","eyes":"","facial_hair":"","clothing":"","distinctive":""}}],'
     '"relationships":[{"source":"<character name>","target":"<character name>","relationship":"<one word>",'
     '"label":"<one short sentence>","evidence":"<exact short quote from the excerpts>"}]}'
 )
@@ -95,12 +101,13 @@ def _build_messages(passages: list[RetrievedPassage], known_names: list[str] | N
         "TASK: Extract the characters and their explicitly supported relationships in these excerpts.\n"
         f"REQUIRED JSON SHAPE (replace every <placeholder> with real content): {_REQUIRED_SHAPE}\n"
         "Every evidence field must be an exact short quote (under 25 words) copied verbatim from "
-        "the excerpts above. Each appearance field is a short visual description (under 40 words) of how "
-        "the character looks, using only details stated or clearly implied by the excerpts (approximate age, "
-        "sex, build, hair, eyes, clothing, era) -- never include any names, and use \"\" if the excerpts give "
-        "nothing. Output JSON only."
-        "the excerpts above. Inside JSON string values, write any double quotation marks from the book "
-        "as single quotes (') so the JSON stays valid. Output JSON only."
+        "the excerpts above. Each look describes how that character looks, from the excerpts only: always "
+        "fill sex (from pronouns, gendered titles like Mr/Mrs/Sir/Lady, or family words) and type, add approximate "
+        "age when stated or clearly implied, and fill the other fields only with details the excerpts give "
+        "(under 12 words each, otherwise \"\"). Describe only the character's own body and clothes: no horses, "
+        "no objects they hold, no comparisons to other characters, never any names. The setting is one short "
+        "phrase (under 20 words) for the era and kind of place, no names. Inside JSON string values, write any "
+        "double quotation marks from the book as single quotes (') so the JSON stays valid. Output JSON only."
     )
     return [{"role": "system", "content": _SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
@@ -246,7 +253,10 @@ def _normalize(
         traits_list = [_plain_text(t, 50) for t in traits[:8] if isinstance(t, str)] if isinstance(traits, list) else []
         description = _plain_text(entry.get("description"), 400)
         role = _plain_text(entry.get("role") or "unknown", 40)
-        appearance = _plain_text(entry.get("appearance"), 300)
+        # Structured look (current prompt) or free-text appearance (older replies);
+        # "not described directly" & co. become None, never a portrait prompt.
+        look = normalize_look(entry.get("look"))
+        appearance = render_look(look) or meaningful_appearance(_plain_text(entry.get("appearance"), 300))
         nodes.append(
             {
                 "id": char_id,
@@ -255,6 +265,7 @@ def _normalize(
                 "description": (description + (f" Traits: {', '.join(traits_list)}." if traits_list else "")).strip(),
                 "first_seen_chunk_id": first_seen.chunk_id,
                 "appearance": appearance or None,
+                "look": look,
             }
         )
 
@@ -327,6 +338,16 @@ def merge_graph(
             ]
             if len(candidates) == 1:
                 target = candidates[0]
+            elif not candidates:
+                # Same person under a title: "Magister Illyrio" ~ "Illyrio
+                # Mopatis", "Lady Arryn" ~ "Lysa Arryn" -- only when exactly
+                # one existing character fits and the sexes don't clash.
+                titled = [
+                    n for n in nodes
+                    if titled_variant(new["name"], new.get("look"), n["name"], n.get("look"))
+                ]
+                if len(titled) == 1:
+                    target = titled[0]
         if target is None:
             added = dict(new)
             nodes.append(added)
@@ -341,6 +362,19 @@ def merge_graph(
             target["role"] = new["role"]
         if not target.get("first_seen_chunk_id"):
             target["first_seen_chunk_id"] = new.get("first_seen_chunk_id")
+        # Keep the richer look: a character named in one batch but only
+        # described in a later one must not stay with no appearance. The
+        # structured profile is merged field by field (earlier values kept,
+        # gaps filled from the new batch).
+        merged_look = merge_looks(target.get("look"), new.get("look"))
+        if merged_look:
+            target["look"] = merged_look
+        new_text = meaningful_appearance(new.get("appearance"))
+        old_text = meaningful_appearance(target.get("appearance"))
+        if merged_look and render_look(merged_look):
+            target["appearance"] = render_look(merged_look)
+        elif new_text and (not old_text or len(new_text.split()) > len(old_text.split())):
+            target["appearance"] = new_text
 
     edges = [dict(e) for e in base_edges]
     seen = {(e["source"], e["target"], e["relationship"]) for e in edges}
@@ -455,9 +489,13 @@ class LLMCharacterGraphProvider:
 
         passages = sorted(passages, key=lambda p: p.order_index)
         through = previous.processed_through_order if previous and previous.status == "ready" else None
+        setting: str | None = None
         if through is not None and passages[-1].order_index >= through:
             nodes, edges = list(previous.nodes), list(previous.edges)
             new_passages = [p for p in passages if p.order_index > through]
+            # Extracted once (the first batch that names it) and then kept, so
+            # every portrait of the book shares the same era and place.
+            setting = previous.setting
         else:
             # First Update, a map saved before incremental extraction existed,
             # or the reader moved back before what was analyzed: rebuild up to
@@ -469,6 +507,7 @@ class LLMCharacterGraphProvider:
             return GraphResult(
                 book_id=book_id, status="ready", nodes=nodes, edges=edges, source="extracted",
                 processed_through_order=through, processed_through_label=passages[-1].source_location,
+                setting=setting,
             )
 
         batches = split_into_batches(new_passages, self.batch_chars)
@@ -489,6 +528,7 @@ class LLMCharacterGraphProvider:
                 failed = True
                 break
             for raw, part in parts:
+                setting = setting or clean_setting(raw.get("setting"))
                 part_nodes, part_edges = _normalize(raw, part, known_nodes=nodes)
                 nodes, edges = merge_graph(nodes, edges, part_nodes, part_edges)
             through = batch[-1].order_index
@@ -521,4 +561,5 @@ class LLMCharacterGraphProvider:
             processed_through_order=through,
             processed_through_label=None if complete else last_label,
             complete=complete,
+            setting=setting,
         )

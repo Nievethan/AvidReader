@@ -42,6 +42,12 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     },
     "character_graph_cache": {
         "processed_through_order": "INTEGER",
+        "setting": "TEXT",
+    },
+    "character_portraits": {
+        "look_json": "TEXT",
+        "placeholder": "BOOLEAN",
+        "upgraded": "BOOLEAN NOT NULL DEFAULT 0",
     },
 }
 

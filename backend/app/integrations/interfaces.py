@@ -99,6 +99,9 @@ class GraphResult:
     # False when this Update stopped before the reader's boundary
     # (batch cap reached or an AI error); the next Update continues.
     complete: bool = True
+    # One short, name-free phrase for the book's era and kind of place,
+    # extracted once and reused by every portrait prompt.
+    setting: str | None = None
 
 
 # ---- Provider protocols ----------------------------------------------------
